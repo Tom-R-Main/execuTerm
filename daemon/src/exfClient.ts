@@ -66,6 +66,17 @@ export class ExfClient {
 
   // Tasks
 
+  async listProjects(options?: { status?: string; includeArchived?: boolean }) {
+    const params = new URLSearchParams();
+    if (options?.status) params.set('status', options.status);
+    if (options?.includeArchived) params.set('includeArchived', 'true');
+    const query = params.toString();
+    return this.request<{ projects: Record<string, unknown>[] }>(
+      'GET',
+      `/api/v1/projects${query ? `?${query}` : ''}`
+    );
+  }
+
   async getTask(taskId: string) {
     return this.request<{ task: Record<string, unknown> }>(
       'GET',

@@ -1,4 +1,4 @@
-import { readFileSync, writeFileSync, mkdirSync } from 'node:fs';
+import { readFileSync, writeFileSync, mkdirSync, unlinkSync } from 'node:fs';
 import { join } from 'node:path';
 import { homedir } from 'node:os';
 
@@ -21,6 +21,10 @@ function getAuthFile(): string {
   return join(getConfigDir(), 'auth.json');
 }
 
+export function getAuthFilePath(): string {
+  return getAuthFile();
+}
+
 function getDaemonConfigFile(): string {
   return join(getConfigDir(), 'terminal.json');
 }
@@ -36,6 +40,21 @@ export function readAuthToken(): string | null {
     return config.token || null;
   } catch {
     return null;
+  }
+}
+
+export function writeAuthToken(token: string): void {
+  mkdirSync(getConfigDir(), { recursive: true, mode: 0o700 });
+  writeFileSync(getAuthFile(), JSON.stringify({ token }, null, 2), {
+    mode: 0o600,
+  });
+}
+
+export function deleteAuthToken(): void {
+  try {
+    unlinkSync(getAuthFile());
+  } catch {
+    // Already gone
   }
 }
 

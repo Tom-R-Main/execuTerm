@@ -103,6 +103,21 @@ export interface DaemonState {
   lastSync: string;
 }
 
+export type DaemonAuthStatus =
+  | 'authenticated'
+  | 'unauthenticated'
+  | 'device_flow'
+  | 'error';
+
+export interface DaemonAuthState {
+  status: DaemonAuthStatus;
+  message?: string;
+  verificationUri?: string;
+  verificationUriComplete?: string;
+  userCode?: string;
+  expiresAt?: string;
+}
+
 export interface WorkspaceTemplate {
   id: string;
   name: string;

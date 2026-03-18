@@ -2297,6 +2297,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         installShortcutMonitor()
         installShortcutDefaultsObserver()
         NSApp.servicesProvider = self
+
+        // Start the execuTerm daemon after a short delay to ensure the cmux socket listener has bound.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
+            ExecuTermDaemonController.shared.start()
+        }
+
 #if DEBUG
         UpdateTestSupport.applyIfNeeded(to: updateController.viewModel)
         if env["CMUX_UI_TEST_MODE"] == "1" {
@@ -2435,6 +2441,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         _ = saveSessionSnapshot(includeScrollback: true, removeWhenEmpty: false)
         stopSessionAutosaveTimer()
         TerminalController.shared.stop()
+        ExecuTermDaemonController.shared.stop()
         VSCodeServeWebController.shared.stop()
         BrowserProfileStore.shared.flushPendingSaves()
         if TelemetrySettings.enabledForCurrentLaunch {

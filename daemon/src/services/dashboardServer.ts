@@ -2,16 +2,17 @@ import * as http from 'node:http';
 import type { AgentManager } from './agentManager.js';
 import type { WorkspaceManager } from './workspaceManager.js';
 import type { ExfClient } from '../exfClient.js';
-import type { SessionState } from '../types.js';
+import type { DaemonAuthState, SessionState } from '../types.js';
 
 export class DashboardServer {
   private server: http.Server | null = null;
   private port = 0;
 
   constructor(
-    private agentManager: AgentManager,
+    private getAgentManager: () => AgentManager | null,
     private workspaceManager: WorkspaceManager,
-    private exfClient: ExfClient
+    private getExfClient: () => ExfClient | null,
+    private getAuthState: () => DaemonAuthState
   ) {}
 
   async start(preferredPort?: number): Promise<number> {
@@ -91,7 +92,14 @@ export class DashboardServer {
         error?: string;
       };
 
-      await this.agentManager.transition(
+      const agentManager = this.getAgentManager();
+      if (!agentManager) {
+        res.writeHead(503, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'Agent manager unavailable' }));
+        return;
+      }
+
+      await agentManager.transition(
         event.workspaceId,
         event.state,
         event.error
@@ -106,13 +114,15 @@ export class DashboardServer {
   }
 
   private async serveStatus(res: http.ServerResponse): Promise<void> {
-    const sessions = this.agentManager.getAllSessions();
+    const sessions = this.getAgentManager()?.getAllSessions() ?? [];
     const agentWorkspaces = this.workspaceManager.getAgentWorkspaces();
     const devWorkspaces = this.workspaceManager.getDevServerWorkspaces();
+    const auth = this.getAuthState();
 
     res.writeHead(200, { 'Content-Type': 'application/json' });
     res.end(
       JSON.stringify({
+        auth,
         agents: sessions,
         agentWorkspaces: agentWorkspaces.length,
         devServers: devWorkspaces.length,
@@ -121,16 +131,20 @@ export class DashboardServer {
   }
 
   private async serveDashboard(res: http.ServerResponse): Promise<void> {
-    const sessions = this.agentManager.getAllSessions();
+    const agentManager = this.getAgentManager();
+    const exfClient = this.getExfClient();
+    const auth = this.getAuthState();
+    const sessions = agentManager?.getAllSessions() ?? [];
     const devWorkspaces = this.workspaceManager.getDevServerWorkspaces();
 
     let nextEvent = '';
-    try {
+    if (exfClient) {
+      try {
       const today = new Date().toISOString().split('T')[0];
       const tomorrow = new Date(Date.now() + 86400000)
         .toISOString()
         .split('T')[0];
-      const cal = await this.exfClient.listCalendarEvents({
+      const cal = await exfClient.listCalendarEvents({
         startDate: today,
         endDate: tomorrow,
         limit: 3,
@@ -138,8 +152,9 @@ export class DashboardServer {
       if (cal.data?.events?.[0]) {
         nextEvent = (cal.data.events[0] as { title: string }).title;
       }
-    } catch {
-      // Non-critical
+      } catch {
+        // Non-critical
+      }
     }
 
     const stateColors: Record<string, string> = {
@@ -176,6 +191,8 @@ export class DashboardServer {
       )
       .join('');
 
+    const authCard = this.renderAuthCard(auth);
+
     const html = `<!DOCTYPE html>
 <html>
 <head>
@@ -195,6 +212,8 @@ export class DashboardServer {
 </head>
 <body>
   <h1>execuTerm</h1>
+
+  ${authCard}
 
   ${nextEvent ? `<div class="calendar">Next: ${esc(nextEvent)}</div>` : ''}
 
@@ -216,5 +235,45 @@ export class DashboardServer {
 
     res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
     res.end(html);
+  }
+
+  private renderAuthCard(auth: DaemonAuthState): string {
+    const esc = (s: string) =>
+      s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+
+    if (auth.status === 'authenticated') {
+      return auth.message
+        ? `<div class="calendar">${esc(auth.message)}</div>`
+        : '';
+    }
+
+    if (auth.status === 'device_flow') {
+      const expires = auth.expiresAt
+        ? new Date(auth.expiresAt).toLocaleTimeString()
+        : 'soon';
+      const verificationUrl = auth.verificationUriComplete || auth.verificationUri || '#';
+      return `
+  <div class="calendar">
+    <strong>Sign in to ExecuFunction</strong><br>
+    ${auth.message ? `${esc(auth.message)}<br>` : ''}
+    Code: <strong>${esc(auth.userCode || '—')}</strong><br>
+    <a href="${esc(verificationUrl)}">Open verification page</a><br>
+    Expires: ${esc(expires)}
+  </div>`;
+    }
+
+    if (auth.status === 'error') {
+      return `
+  <div class="calendar">
+    <strong>ExecuFunction login error</strong><br>
+    ${esc(auth.message || 'Unknown error')}
+  </div>`;
+    }
+
+    return `
+  <div class="calendar">
+    <strong>ExecuFunction login pending</strong><br>
+    ${esc(auth.message || 'Waiting to start device login...')}
+  </div>`;
   }
 }

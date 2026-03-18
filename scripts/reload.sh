@@ -436,6 +436,16 @@ if [[ -x "$GHOSTTY_HELPER_SRC" ]]; then
   cp "$GHOSTTY_HELPER_SRC" "$BIN_DIR/ghostty"
   chmod +x "$BIN_DIR/ghostty"
 fi
+# Bundle execuTerm daemon binary (requires bun for compilation)
+DAEMON_SRC="$PWD/daemon/src/index.ts"
+if [[ -f "$DAEMON_SRC" ]]; then
+  BIN_DIR="$APP_PATH/Contents/Resources/bin"
+  mkdir -p "$BIN_DIR"
+  if command -v bun &>/dev/null; then
+    bun build "$DAEMON_SRC" --compile --outfile "$BIN_DIR/exf-terminal-daemon"
+    chmod +x "$BIN_DIR/exf-terminal-daemon"
+  fi
+fi
 CLI_PATH="$APP_PATH/Contents/Resources/bin/cmux"
 if [[ -x "$CLI_PATH" ]]; then
   echo "$CLI_PATH" > /tmp/cmux-last-cli-path || true
