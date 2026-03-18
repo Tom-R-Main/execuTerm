@@ -1,0 +1,23 @@
+execuTerm
+Copyright 2026 ExecuFunction Inc.
+
+This product is a fork of cmux (https://github.com/manaflow-ai/cmux),
+originally created by the Manaflow team. cmux is licensed under the
+GNU Affero General Public License v3.0 (AGPL-3.0).
+
+The following components are derived from cmux:
+- Terminal rendering engine (Ghostty-based)
+- Workspace and surface management
+- Socket control API (v1 and v2 protocols)
+- Browser panel integration
+- Claude Code hook system
+- CLI tool
+
+The following components are original to execuTerm:
+- daemon/ — ExecuFunction orchestration daemon (TypeScript)
+- ExecuFunction API integration and authentication
+- Task dispatch and agent lifecycle management
+- Dashboard server
+
+Both upstream cmux code and execuTerm additions are licensed under AGPL-3.0.
+See LICENSE for the full license text.
