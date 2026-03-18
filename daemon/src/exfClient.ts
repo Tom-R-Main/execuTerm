@@ -16,6 +16,10 @@ export interface ExfClientConfig {
   pat: string;
 }
 
+function generateIdempotencyKey(): string {
+  return `daemon-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+}
+
 export class ExfClient {
   private apiUrl: string;
   private pat: string;
@@ -28,13 +32,20 @@ export class ExfClient {
   private async request<T>(
     method: string,
     path: string,
-    body?: unknown
+    body?: unknown,
+    extraHeaders?: Record<string, string>
   ): Promise<ApiResponse<T>> {
     const url = `${this.apiUrl}${path}`;
     const headers: Record<string, string> = {
       Authorization: `Bearer ${this.pat}`,
       'Content-Type': 'application/json',
+      ...extraHeaders,
     };
+
+    // Mutation requests require an idempotency key
+    if ((method === 'PATCH' || method === 'POST' || method === 'DELETE') && !headers['Idempotency-Key']) {
+      headers['Idempotency-Key'] = generateIdempotencyKey();
+    }
 
     try {
       const response = await fetch(url, {
