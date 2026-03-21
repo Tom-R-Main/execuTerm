@@ -6,13 +6,12 @@
 # so that Claude Code hooks fire back into cmux for notifications/status.
 # Outside cmux, it passes through to the real claude binary unchanged.
 
-# Find the real claude binary, skipping our own directory.
+# Find the real claude binary, skipping any cmux Resources/bin directory.
 find_real_claude() {
-    local self_dir
-    self_dir="$(cd "$(dirname "$0")" && pwd)"
     local IFS=:
     for d in $PATH; do
-        [[ "$d" == "$self_dir" ]] && continue
+        # Skip any cmux app bundle's Resources/bin (production, debug, tagged)
+        [[ "$d" == */Resources/bin ]] && continue
         [[ -x "$d/claude" ]] && printf '%s' "$d/claude" && return 0
     done
     return 1
@@ -41,8 +40,12 @@ IN_CMUX=0
 if [[ -n "$CMUX_SURFACE_ID" ]]; then
     IN_CMUX=1
 fi
+MANAGED_AGENT=0
+if [[ "${EXECUTERM_MANAGED_AGENT:-}" == "1" ]]; then
+    MANAGED_AGENT=1
+fi
 
-if [[ "$IN_CMUX" == "0" || "$CMUX_CLAUDE_HOOKS_DISABLED" == "1" ]] || ! cmux_socket_available; then
+if [[ "$IN_CMUX" == "0" || "$MANAGED_AGENT" == "0" || "$CMUX_CLAUDE_HOOKS_DISABLED" == "1" ]] || ! cmux_socket_available; then
     # In cmux-launched shells, preserve old behavior and always clear nested
     # Claude session markers, even when we must pass through due to stale socket.
     if [[ "$IN_CMUX" == "1" ]]; then

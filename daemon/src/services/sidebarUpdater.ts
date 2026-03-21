@@ -1,6 +1,6 @@
 import * as http from 'node:http';
 
-import type { CmuxSocket } from '../cmuxSocket.js';
+import type { ExecuTermSocket } from '../execuTermSocket.js';
 import type { ExfClient } from '../exfClient.js';
 import type { AgentManager } from './agentManager.js';
 import type { WorkspaceManager } from './workspaceManager.js';
@@ -9,9 +9,10 @@ import type { DaemonConfig } from '../types.js';
 export class SidebarUpdater {
   private fastTimer: ReturnType<typeof setInterval> | null = null;
   private slowTimer: ReturnType<typeof setInterval> | null = null;
+  private externalCompletionNotices = new Set<string>();
 
   constructor(
-    private cmux: CmuxSocket,
+    private cmux: ExecuTermSocket,
     private exfClient: ExfClient,
     private agentManager: AgentManager,
     private workspaceManager: WorkspaceManager,
@@ -64,6 +65,7 @@ export class SidebarUpdater {
 
       if (taskResult.data?.tasks) {
         const agentSessions = this.agentManager.getAllSessions();
+        const nextExternalCompletionNotices = new Set<string>();
 
         for (const session of agentSessions) {
           if (!session.taskId) continue;
@@ -71,8 +73,26 @@ export class SidebarUpdater {
           const task = taskResult.data.tasks.find(
             (t) => (t as { id: string }).id === session.taskId
           );
+          const noticeKey = `${session.workspaceId}:${session.taskId}`;
 
-          if (!task) {
+          if (task) continue;
+
+          nextExternalCompletionNotices.add(noticeKey);
+          if (this.externalCompletionNotices.has(noticeKey)) continue;
+
+          const surfaceId =
+            session.surfaceId ||
+            this.workspaceManager.getWorkspace(session.workspaceId)?.surfaceId;
+
+          if (surfaceId) {
+            await this.cmux
+              .notificationCreateForSurface(
+                surfaceId,
+                'Task completed externally',
+                `Task for ${session.agentType} was completed outside this session`
+              )
+              .catch(() => {});
+          } else {
             await this.cmux
               .notificationCreate(
                 'Task completed externally',
@@ -81,6 +101,8 @@ export class SidebarUpdater {
               .catch(() => {});
           }
         }
+
+        this.externalCompletionNotices = nextExternalCompletionNotices;
       }
 
       // Fetch today's calendar → show next event in agent workspaces

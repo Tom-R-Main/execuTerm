@@ -31,7 +31,7 @@ final class ExecuTermDaemonController {
         let verificationUriComplete: String?
     }
 
-    private let queue = DispatchQueue(label: "com.cmuxterm.daemon")
+    private let queue = DispatchQueue(label: "com.execufunction.executerm.daemon")
     private var process: Process?
     private var dashboardPort: Int?
     private var isStarting = false
@@ -44,6 +44,8 @@ final class ExecuTermDaemonController {
     private var currentBrowserDestination: BrowserDestination?
     private var isPollingAuthStatus = false
     private var lastKnownAuthStatus: String?
+    private var launchTime: Date?
+    private var hasAutoRestarted = false
 
     private static let healthPollInterval: TimeInterval = 0.5
     private static let healthTimeout: TimeInterval = 30
@@ -125,6 +127,10 @@ final class ExecuTermDaemonController {
                 stderrPipe.fileHandleForReading.readabilityHandler = nil
                 self?.queue.async {
                     guard let self else { return }
+                    let shouldAutoRestart = terminatedProcess.terminationStatus != 0
+                        && !self.hasAutoRestarted
+                        && self.process === terminatedProcess
+                        && self.launchTime.map({ Date().timeIntervalSince($0) < 30 }) ?? false
                     if self.process === terminatedProcess {
                         self.process = nil
                         self.dashboardPort = nil
@@ -143,12 +149,20 @@ final class ExecuTermDaemonController {
                     self.logFileHandle?.closeFile()
                     self.logFileHandle = nil
                     self.trace("Daemon process terminated status=\(terminatedProcess.terminationStatus)")
+                    if shouldAutoRestart {
+                        self.hasAutoRestarted = true
+                        self.trace("Auto-restarting daemon after early exit (status=\(terminatedProcess.terminationStatus))")
+                        self.queue.asyncAfter(deadline: .now() + 2.0) { [weak self] in
+                            self?.start()
+                        }
+                    }
                 }
             }
 
             do {
                 try proc.run()
                 self.process = proc
+                self.launchTime = Date()
                 self.trace("Daemon launched pid=\(proc.processIdentifier)")
                 startHealthPoll()
             } catch {
@@ -205,14 +219,31 @@ final class ExecuTermDaemonController {
 
     private func resolveDaemonPath() -> (executable: URL, arguments: [String])? {
         // Release: bundled binary
-        let bundledPath = Bundle.main.bundleURL
-            .appendingPathComponent("Contents/Resources/bin/exf-terminal-daemon", isDirectory: false)
-        if FileManager.default.isExecutableFile(atPath: bundledPath.path) {
-            return (executable: bundledPath, arguments: [])
+        let bundledBinDir = Bundle.main.bundleURL
+            .appendingPathComponent("Contents/Resources/bin", isDirectory: true)
+        let bundledLauncher = bundledBinDir
+            .appendingPathComponent("exf-terminal-daemon", isDirectory: false)
+#if arch(arm64)
+        let preferredBundledDaemon = bundledBinDir
+            .appendingPathComponent("exf-terminal-daemon-arm64", isDirectory: false)
+#elseif arch(x86_64)
+        let preferredBundledDaemon = bundledBinDir
+            .appendingPathComponent("exf-terminal-daemon-x64", isDirectory: false)
+#else
+        let preferredBundledDaemon = bundledLauncher
+#endif
+
+        if FileManager.default.isExecutableFile(atPath: preferredBundledDaemon.path) {
+            return (executable: preferredBundledDaemon, arguments: [])
+        }
+
+        if FileManager.default.isExecutableFile(atPath: bundledLauncher.path) {
+            return (executable: bundledLauncher, arguments: [])
         }
 
         // Dev: use tsx from the repo
-        guard let repoRoot = ProcessInfo.processInfo.environment["CMUXTERM_REPO_ROOT"] else {
+        guard let repoRoot = ProcessInfo.processInfo.environment["EXECUTERM_REPO_ROOT"]
+            ?? ProcessInfo.processInfo.environment["CMUXTERM_REPO_ROOT"] else {
             return nil
         }
         let tsxPath = URL(fileURLWithPath: repoRoot)
@@ -232,7 +263,9 @@ final class ExecuTermDaemonController {
 
     private func daemonEnvironment() -> [String: String] {
         var env = ProcessInfo.processInfo.environment
-        env["CMUX_SOCKET_PATH"] = SocketControlSettings.socketPath()
+        let socketPath = SocketControlSettings.socketPath()
+        env["EXECUTERM_SOCKET_PATH"] = socketPath
+        env["CMUX_SOCKET_PATH"] = socketPath  // backwards compat
         env["EXECUTERM_LAUNCHED_BY_APP"] = "1"
         // Ensure PATH is inherited for node/tsx discovery in dev
         return env
@@ -470,6 +503,14 @@ final class ExecuTermDaemonController {
             browserWorkspaceId = tabManager.selectedTabId
             currentBrowserDestination = destination
             trace("Browser opened kind=\(destination.kind.rawValue) url=\(targetURL.absoluteString)")
+
+            // Give the dashboard workspace a recognizable sidebar label
+            if destination.kind == .dashboard,
+               let wsId = browserWorkspaceId,
+               let workspace = tabManager.tabs.first(where: { $0.id == wsId }) {
+                workspace.setCustomTitle("execuTerm")
+            }
+
             if destination.kind == .dashboard,
                lastKnownAuthStatus == "authenticated" {
                 cancelAuthStatusPoll()

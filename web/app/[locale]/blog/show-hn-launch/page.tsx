@@ -133,7 +133,7 @@ export default function ShowHNLaunchPage() {
       <p>
         {t.rich("cta", {
           link: (chunks) => (
-            <a href="https://github.com/manaflow-ai/cmux">{chunks}</a>
+            <a href="https://github.com/Tom-R-Main/execuTerm">{chunks}</a>
           ),
         })}
       </p>

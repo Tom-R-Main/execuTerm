@@ -8,109 +8,109 @@
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "cmux"
+            "value": "execuTerm"
           }
         },
         "ja": {
           "stringUnit": {
             "state": "translated",
-            "value": "cmux"
+            "value": "execuTerm"
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "cmux"
+            "value": "execuTerm"
           }
         },
         "zh-Hant": {
           "stringUnit": {
             "state": "translated",
-            "value": "cmux"
+            "value": "execuTerm"
           }
         },
         "ko": {
           "stringUnit": {
             "state": "translated",
-            "value": "cmux"
+            "value": "execuTerm"
           }
         },
         "de": {
           "stringUnit": {
             "state": "translated",
-            "value": "cmux"
+            "value": "execuTerm"
           }
         },
         "es": {
           "stringUnit": {
             "state": "translated",
-            "value": "cmux"
+            "value": "execuTerm"
           }
         },
         "fr": {
           "stringUnit": {
             "state": "translated",
-            "value": "cmux"
+            "value": "execuTerm"
           }
         },
         "it": {
           "stringUnit": {
             "state": "translated",
-            "value": "cmux"
+            "value": "execuTerm"
           }
         },
         "da": {
           "stringUnit": {
             "state": "translated",
-            "value": "cmux"
+            "value": "execuTerm"
           }
         },
         "pl": {
           "stringUnit": {
             "state": "translated",
-            "value": "cmux"
+            "value": "execuTerm"
           }
         },
         "ru": {
           "stringUnit": {
             "state": "translated",
-            "value": "cmux"
+            "value": "execuTerm"
           }
         },
         "bs": {
           "stringUnit": {
             "state": "translated",
-            "value": "cmux"
+            "value": "execuTerm"
           }
         },
         "ar": {
           "stringUnit": {
             "state": "translated",
-            "value": "cmux"
+            "value": "execuTerm"
           }
         },
         "nb": {
           "stringUnit": {
             "state": "translated",
-            "value": "cmux"
+            "value": "execuTerm"
           }
         },
         "pt-BR": {
           "stringUnit": {
             "state": "translated",
-            "value": "cmux"
+            "value": "execuTerm"
           }
         },
         "th": {
           "stringUnit": {
             "state": "translated",
-            "value": "cmux"
+            "value": "execuTerm"
           }
         },
         "tr": {
           "stringUnit": {
             "state": "translated",
-            "value": "cmux"
+            "value": "execuTerm"
           }
         }
       }
@@ -1032,13 +1032,13 @@
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Welcome to cmux!"
+            "value": "Welcome to execuTerm!"
           }
         },
         "ja": {
           "stringUnit": {
             "state": "translated",
-            "value": "cmuxへようこそ！"
+            "value": "execuTermへようこそ！"
           }
         }
       }
@@ -14468,19 +14468,19 @@
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Shell Command: Install 'cmux' in PATH"
+            "value": "Shell Command: Install 'execuTerm' in PATH"
           }
         },
         "ja": {
           "stringUnit": {
             "state": "translated",
-            "value": "シェルコマンド: 'cmux'をPATHにインストール"
+            "value": "シェルコマンド: 'execuTerm'をPATHにインストール"
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "Shell 命令：将 'cmux' 安装到 PATH"
+            "value": "Shell 命令：将 'execuTerm' 安装到 PATH"
           }
         },
         "zh-Hant": {
@@ -21022,19 +21022,19 @@
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Shell Command: Uninstall 'cmux' from PATH"
+            "value": "Shell Command: Uninstall 'execuTerm' from PATH"
           }
         },
         "ja": {
           "stringUnit": {
             "state": "translated",
-            "value": "シェルコマンド: 'cmux'をPATHからアンインストール"
+            "value": "シェルコマンド: 'execuTerm'をPATHからアンインストール"
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "Shell 命令：从 PATH 卸载 'cmux'"
+            "value": "Shell 命令：从 PATH 卸载 'execuTerm'"
           }
         },
         "zh-Hant": {
@@ -31594,7 +31594,7 @@
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Quit cmux?"
+            "value": "Quit execuTerm?"
           }
         },
         "ja": {
@@ -32611,7 +32611,7 @@
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "About cmux"
+            "value": "About execuTerm"
           }
         },
         "ja": {
@@ -37487,7 +37487,7 @@
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Quit cmux"
+            "value": "Quit execuTerm"
           }
         },
         "ja": {
@@ -72503,19 +72503,19 @@
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "cmux can automatically check for updates in the background."
+            "value": "execuTerm can automatically check for updates in the background."
           }
         },
         "ja": {
           "stringUnit": {
             "state": "translated",
-            "value": "cmux はバックグラウンドで自動的にアップデートを確認できます。"
+            "value": "execuTerm はバックグラウンドで自動的にアップデートを確認できます。"
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "cmux 可以在后台自动检查更新。"
+            "value": "execuTerm 可以在后台自动检查更新。"
           }
         },
         "zh-Hant": {

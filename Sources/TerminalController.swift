@@ -5,11 +5,11 @@ import Bonsplit
 import WebKit
 
 extension Notification.Name {
-    static let socketListenerDidStart = Notification.Name("cmux.socketListenerDidStart")
-    static let terminalSurfaceDidBecomeReady = Notification.Name("cmux.terminalSurfaceDidBecomeReady")
-    static let terminalSurfaceHostedViewDidMoveToWindow = Notification.Name("cmux.terminalSurfaceHostedViewDidMoveToWindow")
-    static let mainWindowContextsDidChange = Notification.Name("cmux.mainWindowContextsDidChange")
-    static let browserDownloadEventDidArrive = Notification.Name("cmux.browserDownloadEventDidArrive")
+    static let socketListenerDidStart = Notification.Name("execuTerm.socketListenerDidStart")
+    static let terminalSurfaceDidBecomeReady = Notification.Name("execuTerm.terminalSurfaceDidBecomeReady")
+    static let terminalSurfaceHostedViewDidMoveToWindow = Notification.Name("execuTerm.terminalSurfaceHostedViewDidMoveToWindow")
+    static let mainWindowContextsDidChange = Notification.Name("execuTerm.mainWindowContextsDidChange")
+    static let browserDownloadEventDidArrive = Notification.Name("execuTerm.browserDownloadEventDidArrive")
 }
 
 /// Unix socket-based controller for programmatic terminal control

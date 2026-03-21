@@ -8,6 +8,7 @@
 
 		/* Begin PBXBuildFile section */
 			A5001001 /* cmuxApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = A5001011 /* cmuxApp.swift */; };
+			D0A10004E1F20003A4B50006 /* main.swift in Sources */ = {isa = PBXBuildFile; fileRef = D0A10003E1F20003A4B50006 /* main.swift */; };
 			A5001002 /* ContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A5001012 /* ContentView.swift */; };
 			E62155868BB29FEB5DAAAF25 /* SidebarSelectionState.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9AD52285508B1D6A9875E7B3 /* SidebarSelectionState.swift */; };
 			B9000018A1B2C3D4E5F60719 /* WindowDragHandleView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B9000017A1B2C3D4E5F60719 /* WindowDragHandleView.swift */; };
@@ -103,7 +104,7 @@
 					A5008383 /* CommandPaletteSearchEngineTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A5008382 /* CommandPaletteSearchEngineTests.swift */; };
 		DA7A10CA710E000000000003 /* Localizable.xcstrings in Resources */ = {isa = PBXBuildFile; fileRef = DA7A10CA710E000000000001 /* Localizable.xcstrings */; };
 		DA7A10CA710E000000000004 /* InfoPlist.xcstrings in Resources */ = {isa = PBXBuildFile; fileRef = DA7A10CA710E000000000002 /* InfoPlist.xcstrings */; };
-		A5001623 /* cmux.sdef in Resources */ = {isa = PBXBuildFile; fileRef = A5001622 /* cmux.sdef */; };
+		A5001623 /* execuTerm.sdef in Resources */ = {isa = PBXBuildFile; fileRef = A5001622 /* execuTerm.sdef */; };
 			/* End PBXBuildFile section */
 
 /* Begin PBXCopyFilesBuildPhase section */
@@ -157,10 +158,11 @@
 /* End PBXContainerItemProxy section */
 
 		/* Begin PBXFileReference section */
-			A5001000 /* cmux.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = cmux.app; sourceTree = BUILT_PRODUCTS_DIR; };
+			A5001000 /* execuTerm.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = execuTerm.app; sourceTree = BUILT_PRODUCTS_DIR; };
 			F1000002A1B2C3D4E5F60718 /* cmuxTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = cmuxTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 			7E7E6EF344A568AC7FEE3715 /* cmuxUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = cmuxUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 			A5001011 /* cmuxApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = cmuxApp.swift; sourceTree = "<group>"; };
+			D0A10003E1F20003A4B50006 /* main.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = main.swift; sourceTree = "<group>"; };
 			A5001012 /* ContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContentView.swift; sourceTree = "<group>"; };
 			9AD52285508B1D6A9875E7B3 /* SidebarSelectionState.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SidebarSelectionState.swift; sourceTree = "<group>"; };
 			B9000017A1B2C3D4E5F60719 /* WindowDragHandleView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WindowDragHandleView.swift; sourceTree = "<group>"; };
@@ -254,7 +256,7 @@
 				A5008382 /* CommandPaletteSearchEngineTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CommandPaletteSearchEngineTests.swift; sourceTree = "<group>"; };
 		DA7A10CA710E000000000001 /* Localizable.xcstrings */ = {isa = PBXFileReference; lastKnownFileType = text.json.xcstrings; path = Localizable.xcstrings; sourceTree = "<group>"; };
 		DA7A10CA710E000000000002 /* InfoPlist.xcstrings */ = {isa = PBXFileReference; lastKnownFileType = text.json.xcstrings; path = InfoPlist.xcstrings; sourceTree = "<group>"; };
-		A5001622 /* cmux.sdef */ = {isa = PBXFileReference; lastKnownFileType = text.sdef; path = cmux.sdef; sourceTree = "<group>"; };
+		A5001622 /* execuTerm.sdef */ = {isa = PBXFileReference; lastKnownFileType = text.sdef; path = execuTerm.sdef; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -304,7 +306,7 @@
 				A5002000 /* THIRD_PARTY_LICENSES.md in Resources */,
 				DA7A10CA710E000000000003 /* Localizable.xcstrings in Resources */,
 				DA7A10CA710E000000000004 /* InfoPlist.xcstrings in Resources */,
-				A5001623 /* cmux.sdef in Resources */,
+				A5001623 /* execuTerm.sdef in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -365,6 +367,7 @@
 			A5001041 /* Sources */ = {
 				isa = PBXGroup;
 				children = (
+					D0A10003E1F20003A4B50006 /* main.swift */,
 					A5001011 /* cmuxApp.swift */,
 					A5001012 /* ContentView.swift */,
 					9AD52285508B1D6A9875E7B3 /* SidebarSelectionState.swift */,
@@ -439,7 +442,7 @@
 				C1ADE00001A1B2C3D4E5F719 /* claude */,
 				DA7A10CA710E000000000001 /* Localizable.xcstrings */,
 				DA7A10CA710E000000000002 /* InfoPlist.xcstrings */,
-				A5001622 /* cmux.sdef */,
+				A5001622 /* execuTerm.sdef */,
 			);
 			path = Resources;
 			sourceTree = "<group>";
@@ -447,7 +450,7 @@
 		A5001042 /* Products */ = {
 			isa = PBXGroup;
 			children = (
-				A5001000 /* cmux.app */,
+				A5001000 /* execuTerm.app */,
 				B9000004A1B2C3D4E5F60719 /* cmux */,
 				7E7E6EF344A568AC7FEE3715 /* cmuxUITests.xctest */,
 				F1000002A1B2C3D4E5F60718 /* cmuxTests.xctest */,
@@ -524,7 +527,7 @@
 				);
 			name = GhosttyTabs;
 			productName = GhosttyTabs;
-			productReference = A5001000 /* cmux.app */;
+			productReference = A5001000 /* execuTerm.app */;
 			productType = "com.apple.product-type.application";
 		};
 		B9000005A1B2C3D4E5F60719 /* cmux-cli */ = {
@@ -642,6 +645,7 @@
 				isa = PBXSourcesBuildPhase;
 				buildActionMask = 2147483647;
 				files = (
+					D0A10004E1F20003A4B50006 /* main.swift in Sources */,
 					A5001001 /* cmuxApp.swift in Sources */,
 					A5001002 /* ContentView.swift in Sources */,
 					E62155868BB29FEB5DAAAF25 /* SidebarSelectionState.swift in Sources */,
@@ -838,7 +842,7 @@
 				CODE_SIGN_ENTITLEMENTS = "";
 				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;
-				CURRENT_PROJECT_VERSION = 77;
+				CURRENT_PROJECT_VERSION = 80;
 				DEVELOPMENT_TEAM = "";
 				ENABLE_HARDENED_RUNTIME = NO;
 				GENERATE_INFOPLIST_FILE = NO;
@@ -847,7 +851,7 @@
 					"$(inherited)",
 					"@executable_path/../Frameworks",
 				);
-				MARKETING_VERSION = 0.62.2;
+				MARKETING_VERSION = 0.62.5;
 				OTHER_LDFLAGS = (
 					"-lc++",
 					"-framework",
@@ -861,8 +865,8 @@
 					"-framework",
 					Carbon,
 				);
-				PRODUCT_BUNDLE_IDENTIFIER = com.cmuxterm.app.debug;
-				PRODUCT_NAME = "cmux DEV";
+				PRODUCT_BUNDLE_IDENTIFIER = com.execufunction.executerm.debug;
+				PRODUCT_NAME = execuTerm;
 				SPARKLE_PUBLIC_KEY = "avjcgKibf1FTvhIjLBxhd+0HSpsXU4D0IGlVk8cgqRc=";
 				SWIFT_EMIT_LOC_STRINGS = YES;
 				SWIFT_OBJC_BRIDGING_HEADER = "cmux-Bridging-Header.h";
@@ -877,7 +881,7 @@
 				CODE_SIGN_ENTITLEMENTS = "";
 				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;
-				CURRENT_PROJECT_VERSION = 77;
+				CURRENT_PROJECT_VERSION = 80;
 				DEVELOPMENT_TEAM = "";
 				ENABLE_HARDENED_RUNTIME = NO;
 				GENERATE_INFOPLIST_FILE = NO;
@@ -886,7 +890,7 @@
 					"$(inherited)",
 					"@executable_path/../Frameworks",
 				);
-				MARKETING_VERSION = 0.62.2;
+				MARKETING_VERSION = 0.62.5;
 				OTHER_LDFLAGS = (
 					"-lc++",
 					"-framework",
@@ -901,8 +905,8 @@
 					Carbon,
 				);
 				ONLY_ACTIVE_ARCH = NO;
-				PRODUCT_BUNDLE_IDENTIFIER = com.cmuxterm.app;
-				PRODUCT_NAME = cmux;
+				PRODUCT_BUNDLE_IDENTIFIER = com.execufunction.executerm;
+				PRODUCT_NAME = execuTerm;
 				SPARKLE_PUBLIC_KEY = "avjcgKibf1FTvhIjLBxhd+0HSpsXU4D0IGlVk8cgqRc=";
 				SWIFT_EMIT_LOC_STRINGS = YES;
 				SWIFT_OBJC_BRIDGING_HEADER = "cmux-Bridging-Header.h";
@@ -953,10 +957,10 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 77;
+				CURRENT_PROJECT_VERSION = 80;
 				GENERATE_INFOPLIST_FILE = YES;
 				MACOSX_DEPLOYMENT_TARGET = 14.0;
-				MARKETING_VERSION = 0.62.2;
+				MARKETING_VERSION = 0.62.5;
 				ONLY_ACTIVE_ARCH = YES;
 				PRODUCT_BUNDLE_IDENTIFIER = com.cmuxterm.appuitests;
 				PRODUCT_NAME = "$(TARGET_NAME)";
@@ -970,10 +974,10 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 77;
+				CURRENT_PROJECT_VERSION = 80;
 				GENERATE_INFOPLIST_FILE = YES;
 				MACOSX_DEPLOYMENT_TARGET = 14.0;
-				MARKETING_VERSION = 0.62.2;
+				MARKETING_VERSION = 0.62.5;
 				ONLY_ACTIVE_ARCH = NO;
 				PRODUCT_BUNDLE_IDENTIFIER = com.cmuxterm.appuitests;
 				PRODUCT_NAME = "$(TARGET_NAME)";
@@ -987,16 +991,16 @@
 			buildSettings = {
 				BUNDLE_LOADER = "$(TEST_HOST)";
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 77;
+				CURRENT_PROJECT_VERSION = 80;
 				GENERATE_INFOPLIST_FILE = YES;
 				MACOSX_DEPLOYMENT_TARGET = 14.0;
-				MARKETING_VERSION = 0.62.2;
+				MARKETING_VERSION = 0.62.5;
 				ONLY_ACTIVE_ARCH = YES;
 				PRODUCT_BUNDLE_IDENTIFIER = com.cmuxterm.apptests;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "DEBUG $(inherited)";
 				SWIFT_VERSION = 5.0;
-				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/cmux DEV.app/Contents/MacOS/cmux DEV";
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/execuTerm.app/Contents/MacOS/execuTerm";
 				TEST_TARGET_NAME = GhosttyTabs;
 			};
 			name = Debug;
@@ -1006,15 +1010,15 @@
 			buildSettings = {
 				BUNDLE_LOADER = "$(TEST_HOST)";
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 77;
+				CURRENT_PROJECT_VERSION = 80;
 				GENERATE_INFOPLIST_FILE = YES;
 				MACOSX_DEPLOYMENT_TARGET = 14.0;
-				MARKETING_VERSION = 0.62.2;
+				MARKETING_VERSION = 0.62.5;
 				ONLY_ACTIVE_ARCH = NO;
 				PRODUCT_BUNDLE_IDENTIFIER = com.cmuxterm.apptests;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SWIFT_VERSION = 5.0;
-				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/cmux.app/Contents/MacOS/cmux";
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/execuTerm.app/Contents/MacOS/execuTerm";
 				TEST_TARGET_NAME = GhosttyTabs;
 			};
 			name = Release;

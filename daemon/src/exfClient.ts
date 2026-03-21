@@ -104,11 +104,13 @@ export class ExfClient {
     status?: string;
     limit?: number;
     phase?: string;
+    priority?: string;
   }) {
     const params = new URLSearchParams();
     if (options?.status) params.set('status', options.status);
     if (options?.limit) params.set('limit', options.limit.toString());
     if (options?.phase) params.set('phase', options.phase);
+    if (options?.priority) params.set('priority', options.priority);
     const query = params.toString();
     return this.request<{ tasks: Record<string, unknown>[] }>(
       'GET',
@@ -139,6 +141,56 @@ export class ExfClient {
     return this.request<{ events: Record<string, unknown>[] }>(
       'GET',
       `/api/v1/calendar/events${query ? `?${query}` : ''}`
+    );
+  }
+
+  async createTask(options: {
+    title: string;
+    description?: string;
+    priority?: string;
+    effort?: string;
+    projectId?: string;
+    when?: string;
+    rationale?: string;
+    deliverable?: string;
+    verification?: string;
+    approachConstraints?: string[];
+    acceptanceCriteria?: Array<{ text: string; met?: boolean }>;
+    scope?: { include?: string[]; exclude?: string[] };
+    phase?: string;
+    executorAgent?: string;
+    goalId?: string;
+    dueAt?: string;
+    scheduledAt?: string;
+  }) {
+    return this.request<{ task: Record<string, unknown> }>(
+      'POST',
+      '/api/v1/tasks',
+      options
+    );
+  }
+
+  // Notes
+
+  async searchNotes(options: { query: string; limit?: number }) {
+    const params = new URLSearchParams();
+    params.set('query', options.query);
+    if (options.limit) params.set('limit', options.limit.toString());
+    return this.request<{ notes: Record<string, unknown>[] }>(
+      'GET',
+      `/api/v1/notes/search?${params.toString()}`
+    );
+  }
+
+  // People
+
+  async searchPeople(options: { query: string; limit?: number }) {
+    const params = new URLSearchParams();
+    params.set('query', options.query);
+    if (options.limit) params.set('limit', options.limit.toString());
+    return this.request<{ people: Record<string, unknown>[] }>(
+      'GET',
+      `/api/v1/people/search?${params.toString()}`
     );
   }
 

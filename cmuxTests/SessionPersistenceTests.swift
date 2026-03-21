@@ -128,7 +128,7 @@ final class SessionPersistenceTests: XCTestCase {
 
     func testRestorePolicySkipsWhenLaunchHasExplicitArguments() {
         let shouldRestore = SessionRestorePolicy.shouldAttemptRestore(
-            arguments: ["/Applications/cmux.app/Contents/MacOS/cmux", "--window", "window:1"],
+            arguments: ["/Applications/execuTerm.app/Contents/MacOS/execuTerm", "--window", "window:1"],
             environment: [:]
         )
 
@@ -137,7 +137,7 @@ final class SessionPersistenceTests: XCTestCase {
 
     func testRestorePolicyAllowsFinderStyleLaunchArgumentsOnly() {
         let shouldRestore = SessionRestorePolicy.shouldAttemptRestore(
-            arguments: ["/Applications/cmux.app/Contents/MacOS/cmux", "-psn_0_12345"],
+            arguments: ["/Applications/execuTerm.app/Contents/MacOS/execuTerm", "-psn_0_12345"],
             environment: [:]
         )
 
@@ -146,7 +146,7 @@ final class SessionPersistenceTests: XCTestCase {
 
     func testRestorePolicySkipsWhenRunningUnderXCTest() {
         let shouldRestore = SessionRestorePolicy.shouldAttemptRestore(
-            arguments: ["/Applications/cmux.app/Contents/MacOS/cmux"],
+            arguments: ["/Applications/execuTerm.app/Contents/MacOS/execuTerm"],
             environment: ["XCTestConfigurationFilePath": "/tmp/xctest.xctestconfiguration"]
         )
 

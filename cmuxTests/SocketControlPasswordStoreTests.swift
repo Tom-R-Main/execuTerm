@@ -250,7 +250,7 @@ final class CmuxCLIPathInstallerTests: XCTestCase {
         defer { try? fileManager.removeItem(at: root) }
 
         let bundledCLIURL = root
-            .appendingPathComponent("cmux.app/Contents/Resources/bin/cmux", isDirectory: false)
+            .appendingPathComponent("execuTerm.app/Contents/Resources/bin/cmux", isDirectory: false)
         try fileManager.createDirectory(
             at: bundledCLIURL.deletingLastPathComponent(),
             withIntermediateDirectories: true
@@ -295,7 +295,7 @@ final class CmuxCLIPathInstallerTests: XCTestCase {
         defer { try? fileManager.removeItem(at: root) }
 
         let bundledCLIURL = root
-            .appendingPathComponent("cmux.app/Contents/Resources/bin/cmux", isDirectory: false)
+            .appendingPathComponent("execuTerm.app/Contents/Resources/bin/cmux", isDirectory: false)
         try fileManager.createDirectory(
             at: bundledCLIURL.deletingLastPathComponent(),
             withIntermediateDirectories: true

@@ -9766,20 +9766,23 @@ final class NotificationMenuSnapshotBuilderTests: XCTestCase {
 
 final class MenuBarBuildHintFormatterTests: XCTestCase {
     func testReleaseBuildShowsNoHint() {
-        XCTAssertNil(MenuBarBuildHintFormatter.menuTitle(appName: "cmux DEV menubar-extra", isDebugBuild: false))
+        XCTAssertNil(MenuBarBuildHintFormatter.menuTitle(appName: "execuTerm", isDebugBuild: false))
     }
 
     func testDebugBuildWithTagShowsTag() {
+        setenv("CMUX_TAG", "menubar-extra", 1)
+        defer { unsetenv("CMUX_TAG") }
         XCTAssertEqual(
-            MenuBarBuildHintFormatter.menuTitle(appName: "cmux DEV menubar-extra", isDebugBuild: true),
+            MenuBarBuildHintFormatter.menuTitle(appName: "execuTerm", isDebugBuild: true),
             "Build Tag: menubar-extra"
         )
     }
 
-    func testDebugBuildWithoutTagShowsUntagged() {
+    func testDebugBuildWithoutTagShowsDev() {
+        unsetenv("CMUX_TAG")
         XCTAssertEqual(
-            MenuBarBuildHintFormatter.menuTitle(appName: "cmux DEV", isDebugBuild: true),
-            "Build: DEV (untagged)"
+            MenuBarBuildHintFormatter.menuTitle(appName: "execuTerm", isDebugBuild: true),
+            "Build: DEV"
         )
     }
 }

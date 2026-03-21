@@ -16,21 +16,24 @@ function getHookSessionsPath(): string {
   );
 }
 
+/** Patterns in lastSubtitle that indicate the agent is waiting for user input */
+const WAITING_INPUT_PATTERNS = /permission|tool use|question|confirm|approve|allow|deny/i;
+/** Patterns in lastBody that indicate the agent hit an error */
+const ERROR_PATTERNS = /error|fail|crash|exception|panic|abort/i;
+
 /**
  * Infer agent state from hook session record metadata.
  *
- * The session file stores metadata (lastSubtitle, lastBody, timestamps)
- * but not an explicit state string. The actual state is set via cmux
- * socket commands by the Claude hook. We infer state from the metadata:
- *
- * - Session appears → 'running' (just started)
- * - lastSubtitle contains permission/question content → 'waiting_input'
- * - Session disappears (consumed) → 'review_ready' (Claude finished)
+ * - lastSubtitle matches permission/question patterns → 'waiting_input'
+ * - lastBody matches error patterns → 'failed'
+ * - Otherwise → 'running'
  */
 function inferStateFromRecord(record: ClaudeHookSessionRecord): SessionState {
-  // If there's a recent subtitle about permissions/questions, it's waiting
-  if (record.lastSubtitle && record.lastBody) {
+  if (record.lastSubtitle && WAITING_INPUT_PATTERNS.test(record.lastSubtitle)) {
     return 'waiting_input';
+  }
+  if (record.lastBody && ERROR_PATTERNS.test(record.lastBody)) {
+    return 'failed';
   }
   return 'running';
 }
@@ -95,7 +98,16 @@ export class HookObserver {
 
     // Detect new or updated sessions
     for (const [sessionId, record] of Object.entries(storeFile.sessions)) {
-      const { workspaceId } = record;
+      let { workspaceId } = record;
+      // Try to match via surfaceId if workspaceId is missing
+      if (!workspaceId && record.surfaceId) {
+        const session = this.agentManager
+          .getAllSessions()
+          .find((s) => s.surfaceId === record.surfaceId);
+        if (session) {
+          workspaceId = session.workspaceId;
+        }
+      }
       if (!workspaceId) continue;
 
       const previous = this.knownSessions.get(sessionId);

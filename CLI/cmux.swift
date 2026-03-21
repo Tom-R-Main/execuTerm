@@ -4159,13 +4159,13 @@ struct CMUXCLI {
         let downloadURL = entry?.downloadURL ?? "unknown"
         let checksumsAssetName = manifest?.checksumsAssetName ?? "unknown"
         let checksumsURL = manifest?.checksumsURL ?? "unknown"
-        let downloadCommand = "gh release download \(releaseTag) --repo manaflow-ai/cmux --pattern \(assetName)"
-        let downloadChecksumsCommand = "gh release download \(releaseTag) --repo manaflow-ai/cmux --pattern \(checksumsAssetName)"
+        let downloadCommand = "gh release download \(releaseTag) --repo Tom-R-Main/execuTerm --pattern \(assetName)"
+        let downloadChecksumsCommand = "gh release download \(releaseTag) --repo Tom-R-Main/execuTerm --pattern \(checksumsAssetName)"
         let checksumVerifyCommand = "shasum -a 256 -c \(checksumsAssetName) --ignore-missing"
         let signerWorkflow = releaseTag == "nightly"
-            ? "manaflow-ai/cmux/.github/workflows/nightly.yml"
-            : "manaflow-ai/cmux/.github/workflows/release.yml"
-        let verifyCommand = "gh attestation verify ./\(assetName) --repo manaflow-ai/cmux --signer-workflow \(signerWorkflow)"
+            ? "Tom-R-Main/execuTerm/.github/workflows/nightly.yml"
+            : "Tom-R-Main/execuTerm/.github/workflows/release.yml"
+        let verifyCommand = "gh attestation verify ./\(assetName) --repo Tom-R-Main/execuTerm --signer-workflow \(signerWorkflow)"
 
         let payload: [String: Any] = [
             "app_version": remoteDaemonVersionString(from: info),
@@ -5861,21 +5861,21 @@ struct CMUXCLI {
             """
         case "welcome":
             return """
-            Usage: cmux welcome
+            Usage: execuTerm welcome
 
-            Show a welcome screen with the cmux logo and useful shortcuts.
+            Show a welcome screen with the execuTerm logo and useful shortcuts.
             Auto-runs once on first launch.
             """
         case "shortcuts":
             return """
-            Usage: cmux shortcuts
+            Usage: execuTerm shortcuts
 
             Open the Settings window to Keyboard Shortcuts.
             """
         case "feedback":
             return """
-            Usage: cmux feedback
-                   cmux feedback --email <email> --body <text> [--image <path> ...]
+            Usage: execuTerm feedback
+                   execuTerm feedback --email <email> --body <text> [--image <path> ...]
 
             Without args, open the Send Feedback modal in the running app.
 
@@ -7024,7 +7024,7 @@ struct CMUXCLI {
         return true
     }
 
-    private static let cmuxThemeOverrideBundleIdentifier = "com.cmuxterm.app"
+    private static let cmuxThemeOverrideBundleIdentifier = "com.execufunction.executerm"
     private static let cmuxThemesBlockStart = "# cmux themes start"
     private static let cmuxThemesBlockEnd = "# cmux themes end"
     private static let cmuxThemesReloadNotificationName = "com.cmuxterm.themes.reload-config"
@@ -10720,14 +10720,14 @@ struct CMUXCLI {
         print()
         print(shortcuts)
         print()
-        print("  \(bold)Docs\(reset)\(subdued)                https://cmux.dev/docs\(reset)")
+        print("  \(bold)Docs\(reset)\(subdued)                https://github.com/Tom-R-Main/execuTerm#readme\(reset)")
         print("  \(bold)Discord\(reset)\(subdued)             https://discord.gg/xsgFEVrWCZ\(reset)")
-        print("  \(bold)GitHub\(reset)\(subdued)              https://github.com/manaflow-ai/cmux (please leave a star ⭐)\(reset)")
+        print("  \(bold)GitHub\(reset)\(subdued)              https://github.com/Tom-R-Main/execuTerm (please leave a star ⭐)\(reset)")
         print("  \(bold)Email\(reset)\(subdued)               founders@manaflow.com\(reset)")
         print()
-        print("  \(subdued)Run \(reset)\(bold)cmux --help\(reset)\(subdued) for all commands.\(reset)")
-        print("  \(subdued)Run \(reset)\(bold)cmux shortcuts\(reset)\(subdued) to edit shortcuts.\(reset)")
-        print("  \(subdued)Run \(reset)\(bold)cmux feedback\(reset)\(subdued) to report a bug.\(reset)")
+        print("  \(subdued)Run \(reset)\(bold)execuTerm --help\(reset)\(subdued) for all commands.\(reset)")
+        print("  \(subdued)Run \(reset)\(bold)execuTerm shortcuts\(reset)\(subdued) to edit shortcuts.\(reset)")
+        print("  \(subdued)Run \(reset)\(bold)execuTerm feedback\(reset)\(subdued) to report a bug.\(reset)")
         print()
     }
 

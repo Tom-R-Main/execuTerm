@@ -789,7 +789,7 @@ class TabManager: ObservableObject {
 #endif
 
     init(initialWorkingDirectory: String? = nil) {
-        addWorkspace(workingDirectory: initialWorkingDirectory)
+        addWorkspace(workingDirectory: initialWorkingDirectory, autoWelcomeIfNeeded: false)
         observers.append(NotificationCenter.default.addObserver(
             forName: .ghosttyDidSetTitle,
             object: nil,
@@ -1075,7 +1075,7 @@ class TabManager: ObservableObject {
            terminalPanel.surface.surface != nil {
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
                 UserDefaults.standard.set(true, forKey: WelcomeSettings.shownKey)
-                terminalPanel.sendText("cmux welcome\n")
+                terminalPanel.sendText("execuTerm welcome\n")
             }
             return
         }
@@ -1095,7 +1095,7 @@ class TabManager: ObservableObject {
             panelsCancellable?.cancel()
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
                 UserDefaults.standard.set(true, forKey: WelcomeSettings.shownKey)
-                terminalPanel.sendText("cmux welcome\n")
+                terminalPanel.sendText("execuTerm welcome\n")
             }
         }
 
@@ -2512,13 +2512,13 @@ class TabManager: ObservableObject {
     }
 
     private func windowTitle(for tab: Workspace?) -> String {
-        guard let tab else { return "cmux" }
+        guard let tab else { return "execuTerm" }
         let trimmedTitle = tab.title.trimmingCharacters(in: .whitespacesAndNewlines)
         if !trimmedTitle.isEmpty {
             return trimmedTitle
         }
         let trimmedDirectory = tab.currentDirectory.trimmingCharacters(in: .whitespacesAndNewlines)
-        return trimmedDirectory.isEmpty ? "cmux" : trimmedDirectory
+        return trimmedDirectory.isEmpty ? "execuTerm" : trimmedDirectory
     }
 
     func focusTab(_ tabId: UUID, surfaceId: UUID? = nil, suppressFlash: Bool = false) {
@@ -4697,17 +4697,17 @@ enum ResizeDirection {
 }
 
 extension Notification.Name {
-    static let commandPaletteToggleRequested = Notification.Name("cmux.commandPaletteToggleRequested")
-    static let commandPaletteRequested = Notification.Name("cmux.commandPaletteRequested")
-    static let commandPaletteSwitcherRequested = Notification.Name("cmux.commandPaletteSwitcherRequested")
-    static let commandPaletteSubmitRequested = Notification.Name("cmux.commandPaletteSubmitRequested")
-    static let commandPaletteDismissRequested = Notification.Name("cmux.commandPaletteDismissRequested")
-    static let commandPaletteRenameTabRequested = Notification.Name("cmux.commandPaletteRenameTabRequested")
-    static let commandPaletteRenameWorkspaceRequested = Notification.Name("cmux.commandPaletteRenameWorkspaceRequested")
-    static let commandPaletteMoveSelection = Notification.Name("cmux.commandPaletteMoveSelection")
-    static let commandPaletteRenameInputInteractionRequested = Notification.Name("cmux.commandPaletteRenameInputInteractionRequested")
-    static let commandPaletteRenameInputDeleteBackwardRequested = Notification.Name("cmux.commandPaletteRenameInputDeleteBackwardRequested")
-    static let feedbackComposerRequested = Notification.Name("cmux.feedbackComposerRequested")
+    static let commandPaletteToggleRequested = Notification.Name("execuTerm.commandPaletteToggleRequested")
+    static let commandPaletteRequested = Notification.Name("execuTerm.commandPaletteRequested")
+    static let commandPaletteSwitcherRequested = Notification.Name("execuTerm.commandPaletteSwitcherRequested")
+    static let commandPaletteSubmitRequested = Notification.Name("execuTerm.commandPaletteSubmitRequested")
+    static let commandPaletteDismissRequested = Notification.Name("execuTerm.commandPaletteDismissRequested")
+    static let commandPaletteRenameTabRequested = Notification.Name("execuTerm.commandPaletteRenameTabRequested")
+    static let commandPaletteRenameWorkspaceRequested = Notification.Name("execuTerm.commandPaletteRenameWorkspaceRequested")
+    static let commandPaletteMoveSelection = Notification.Name("execuTerm.commandPaletteMoveSelection")
+    static let commandPaletteRenameInputInteractionRequested = Notification.Name("execuTerm.commandPaletteRenameInputInteractionRequested")
+    static let commandPaletteRenameInputDeleteBackwardRequested = Notification.Name("execuTerm.commandPaletteRenameInputDeleteBackwardRequested")
+    static let feedbackComposerRequested = Notification.Name("execuTerm.feedbackComposerRequested")
     static let ghosttyDidSetTitle = Notification.Name("ghosttyDidSetTitle")
     static let ghosttyDidFocusTab = Notification.Name("ghosttyDidFocusTab")
     static let ghosttyDidFocusSurface = Notification.Name("ghosttyDidFocusSurface")
@@ -4719,6 +4719,6 @@ extension Notification.Name {
     static let browserDidFocusAddressBar = Notification.Name("browserDidFocusAddressBar")
     static let browserDidBlurAddressBar = Notification.Name("browserDidBlurAddressBar")
     static let webViewDidReceiveClick = Notification.Name("webViewDidReceiveClick")
-    static let terminalPortalVisibilityDidChange = Notification.Name("cmux.terminalPortalVisibilityDidChange")
-    static let browserPortalRegistryDidChange = Notification.Name("cmux.browserPortalRegistryDidChange")
+    static let terminalPortalVisibilityDidChange = Notification.Name("execuTerm.terminalPortalVisibilityDidChange")
+    static let browserPortalRegistryDidChange = Notification.Name("execuTerm.browserPortalRegistryDidChange")
 }

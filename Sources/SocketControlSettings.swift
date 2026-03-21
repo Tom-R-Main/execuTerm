@@ -21,7 +21,7 @@ enum SocketControlMode: String, CaseIterable, Identifiable {
         case .off:
             return String(localized: "socketControl.off.name", defaultValue: "Off")
         case .cmuxOnly:
-            return String(localized: "socketControl.cmuxOnly.name", defaultValue: "cmux processes only")
+            return String(localized: "socketControl.cmuxOnly.name", defaultValue: "execuTerm processes only")
         case .automation:
             return String(localized: "socketControl.automation.name", defaultValue: "Automation mode")
         case .password:
@@ -36,7 +36,7 @@ enum SocketControlMode: String, CaseIterable, Identifiable {
         case .off:
             return String(localized: "socketControl.off.description", defaultValue: "Disable the local control socket.")
         case .cmuxOnly:
-            return String(localized: "socketControl.cmuxOnly.description", defaultValue: "Only processes started inside cmux terminals can send commands.")
+            return String(localized: "socketControl.cmuxOnly.description", defaultValue: "Only processes started inside execuTerm terminals can send commands.")
         case .automation:
             return String(localized: "socketControl.automation.description", defaultValue: "Allow external local automation clients from this macOS user (no ancestry check).")
         case .password:
@@ -61,11 +61,11 @@ enum SocketControlMode: String, CaseIterable, Identifiable {
 }
 
 enum SocketControlPasswordStore {
-    static let directoryName = "cmux"
+    static let directoryName = "execuTerm"
     static let fileName = "socket-control-password"
     private static let keychainMigrationDefaultsKey = "socketControlPasswordMigrationVersion"
     private static let keychainMigrationVersion = 1
-    private static let legacyKeychainService = "com.cmuxterm.app.socket-control"
+    private static let legacyKeychainService = "com.execufunction.executerm.socket-control"
     private static let legacyKeychainAccount = "local-socket-password"
     private struct LazyKeychainFallbackCache {
         var hasLoaded = false
@@ -80,7 +80,7 @@ enum SocketControlPasswordStore {
         allowLazyKeychainFallback: Bool = false,
         loadKeychainPassword: () -> String? = { loadLegacyPasswordFromKeychain() }
     ) -> String? {
-        if let envPassword = normalized(environment[SocketControlSettings.socketPasswordEnvKey]) {
+        if let envPassword = normalized(environment[SocketControlSettings.socketPasswordEnvKey] ?? environment[SocketControlSettings.legacySocketPasswordEnvKey]) {
             return envPassword
         }
         let filePassword: String?
@@ -289,12 +289,15 @@ enum SocketControlPasswordStore {
 struct SocketControlSettings {
     static let appStorageKey = "socketControlMode"
     static let legacyEnabledKey = "socketControlEnabled"
-    static let allowSocketPathOverrideKey = "CMUX_ALLOW_SOCKET_OVERRIDE"
-    static let socketPasswordEnvKey = "CMUX_SOCKET_PASSWORD"
-    static let launchTagEnvKey = "CMUX_TAG"
-    static let baseDebugBundleIdentifier = "com.cmuxterm.app.debug"
-    private static let socketDirectoryName = "cmux"
-    private static let stableSocketFileName = "cmux.sock"
+    static let allowSocketPathOverrideKey = "EXECUTERM_ALLOW_SOCKET_OVERRIDE"
+    static let legacyAllowSocketPathOverrideKey = "CMUX_ALLOW_SOCKET_OVERRIDE"
+    static let socketPasswordEnvKey = "EXECUTERM_SOCKET_PASSWORD"
+    static let legacySocketPasswordEnvKey = "CMUX_SOCKET_PASSWORD"
+    static let launchTagEnvKey = "EXECUTERM_TAG"
+    static let legacyLaunchTagEnvKey = "CMUX_TAG"
+    static let baseDebugBundleIdentifier = "com.execufunction.executerm.debug"
+    private static let socketDirectoryName = "execuTerm"
+    private static let stableSocketFileName = "execuTerm.sock"
     private static let lastSocketPathFileName = "last-socket-path"
     static let legacyStableDefaultSocketPath = "/tmp/cmux.sock"
     static let legacyLastSocketPathFile = "/tmp/cmux-last-socket-path"
@@ -364,7 +367,8 @@ struct SocketControlSettings {
     static func launchTag(
         environment: [String: String] = ProcessInfo.processInfo.environment
     ) -> String? {
-        guard let raw = environment[launchTagEnvKey] else { return nil }
+        let raw = environment[launchTagEnvKey] ?? environment[legacyLaunchTagEnvKey]
+        guard let raw else { return nil }
         let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
         return trimmed.isEmpty ? nil : trimmed
     }
@@ -380,7 +384,7 @@ struct SocketControlSettings {
         }
         // XCUITest launches the app as a separate process without XCTest env vars,
         // so isRunningUnderXCTest() misses it. Check for any CMUX_UI_TEST_ env var.
-        if environment.keys.contains(where: { $0.hasPrefix("CMUX_UI_TEST_") }) {
+        if environment.keys.contains(where: { $0.hasPrefix("EXECUTERM_UI_TEST_") || $0.hasPrefix("CMUX_UI_TEST_") }) {
             return false
         }
 
@@ -438,15 +442,16 @@ struct SocketControlSettings {
             bundleIdentifier: bundleIdentifier,
             environment: environment
         ) {
-            if isTruthy(environment[allowSocketPathOverrideKey]),
-               let override = environment["CMUX_SOCKET_PATH"],
+            if isTruthy(environment[allowSocketPathOverrideKey]) || isTruthy(environment[legacyAllowSocketPathOverrideKey]),
+               let override = environment["EXECUTERM_SOCKET_PATH"] ?? environment["CMUX_SOCKET_PATH"],
                !override.isEmpty {
                 return override
             }
             return taggedDebugPath
         }
 
-        guard let override = environment["CMUX_SOCKET_PATH"], !override.isEmpty else {
+        let socketPathOverride = environment["EXECUTERM_SOCKET_PATH"] ?? environment["CMUX_SOCKET_PATH"]
+        guard let override = socketPathOverride, !override.isEmpty else {
             return fallback
         }
 
@@ -470,14 +475,14 @@ struct SocketControlSettings {
         if let taggedDebugPath = taggedDebugSocketPath(bundleIdentifier: bundleIdentifier, environment: [:]) {
             return taggedDebugPath
         }
-        if bundleIdentifier == "com.cmuxterm.app.nightly" {
-            return "/tmp/cmux-nightly.sock"
+        if bundleIdentifier == "com.execufunction.executerm.nightly" {
+            return "/tmp/executerm-nightly.sock"
         }
         if isDebugLikeBundleIdentifier(bundleIdentifier) || isDebugBuild {
-            return "/tmp/cmux-debug.sock"
+            return "/tmp/executerm-debug.sock"
         }
         if isStagingBundleIdentifier(bundleIdentifier) {
-            return "/tmp/cmux-staging.sock"
+            return "/tmp/executerm-staging.sock"
         }
         return resolvedStableDefaultSocketPath(
             currentUserID: currentUserID,
@@ -487,8 +492,8 @@ struct SocketControlSettings {
 
     static func userScopedStableSocketPath(currentUserID: uid_t = getuid()) -> String {
         stableSocketDirectoryURL()?
-            .appendingPathComponent("cmux-\(currentUserID).sock", isDirectory: false)
-            .path ?? "/tmp/cmux-\(currentUserID).sock"
+            .appendingPathComponent("executerm-\(currentUserID).sock", isDirectory: false)
+            .path ?? "/tmp/executerm-\(currentUserID).sock"
     }
 
     static func resolvedStableDefaultSocketPath(
@@ -518,7 +523,7 @@ struct SocketControlSettings {
         bundleIdentifier: String?,
         isDebugBuild: Bool
     ) -> Bool {
-        if isTruthy(environment[allowSocketPathOverrideKey]) {
+        if isTruthy(environment[allowSocketPathOverrideKey]) || isTruthy(environment[legacyAllowSocketPathOverrideKey]) {
             return true
         }
         if isDebugLikeBundleIdentifier(bundleIdentifier) || isStagingBundleIdentifier(bundleIdentifier) {
@@ -529,8 +534,8 @@ struct SocketControlSettings {
 
     static func isDebugLikeBundleIdentifier(_ bundleIdentifier: String?) -> Bool {
         guard let bundleIdentifier else { return false }
-        return bundleIdentifier == "com.cmuxterm.app.debug"
-            || bundleIdentifier.hasPrefix("com.cmuxterm.app.debug.")
+        return bundleIdentifier == "com.execufunction.executerm.debug"
+            || bundleIdentifier.hasPrefix("com.execufunction.executerm.debug.")
     }
 
     static func taggedDebugSocketPath(
@@ -544,7 +549,7 @@ struct SocketControlSettings {
                 .replacingOccurrences(of: ".", with: "-")
                 .trimmingCharacters(in: CharacterSet(charactersIn: "-"))
             if !slug.isEmpty {
-                return "/tmp/cmux-debug-\(slug).sock"
+                return "/tmp/executerm-debug-\(slug).sock"
             }
         }
 
@@ -561,13 +566,13 @@ struct SocketControlSettings {
               !tag.isEmpty else {
             return nil
         }
-        return "/tmp/cmux-debug-\(tag).sock"
+        return "/tmp/executerm-debug-\(tag).sock"
     }
 
     static func isStagingBundleIdentifier(_ bundleIdentifier: String?) -> Bool {
         guard let bundleIdentifier else { return false }
-        return bundleIdentifier == "com.cmuxterm.app.staging"
-            || bundleIdentifier.hasPrefix("com.cmuxterm.app.staging.")
+        return bundleIdentifier == "com.execufunction.executerm.staging"
+            || bundleIdentifier.hasPrefix("com.execufunction.executerm.staging.")
     }
 
     static func stableSocketDirectoryURL(fileManager: FileManager = .default) -> URL? {
@@ -628,7 +633,7 @@ struct SocketControlSettings {
     static func envOverrideEnabled(
         environment: [String: String] = ProcessInfo.processInfo.environment
     ) -> Bool? {
-        guard let raw = environment["CMUX_SOCKET_ENABLE"], !raw.isEmpty else {
+        guard let raw = environment["EXECUTERM_SOCKET_ENABLE"] ?? environment["CMUX_SOCKET_ENABLE"], !raw.isEmpty else {
             return nil
         }
 
@@ -645,7 +650,7 @@ struct SocketControlSettings {
     static func envOverrideMode(
         environment: [String: String] = ProcessInfo.processInfo.environment
     ) -> SocketControlMode? {
-        guard let raw = environment["CMUX_SOCKET_MODE"], !raw.isEmpty else {
+        guard let raw = environment["EXECUTERM_SOCKET_MODE"] ?? environment["CMUX_SOCKET_MODE"], !raw.isEmpty else {
             return nil
         }
         return parseMode(raw)

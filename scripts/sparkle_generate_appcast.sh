@@ -8,7 +8,7 @@ fi
 
 DMG_PATH="$1"
 TAG="$2"
-OUT_PATH="${3:-appcast.xml}"
+OUT_PATH="${3:-executerm-appcast.xml}"
 
 if [[ -z "${SPARKLE_PRIVATE_KEY:-}" ]]; then
   echo "SPARKLE_PRIVATE_KEY is required (exported from Sparkle generate_keys)." >&2
@@ -16,8 +16,8 @@ if [[ -z "${SPARKLE_PRIVATE_KEY:-}" ]]; then
 fi
 
 SPARKLE_VERSION="${SPARKLE_VERSION:-2.8.1}"
-DOWNLOAD_URL_PREFIX="${DOWNLOAD_URL_PREFIX:-https://github.com/manaflow-ai/cmux/releases/download/$TAG/}"
-RELEASE_NOTES_URL="${RELEASE_NOTES_URL:-https://github.com/manaflow-ai/cmux/releases/tag/$TAG}"
+DOWNLOAD_URL_PREFIX="${DOWNLOAD_URL_PREFIX:-https://github.com/Tom-R-Main/execuTerm/releases/download/$TAG/}"
+RELEASE_NOTES_URL="${RELEASE_NOTES_URL:-https://github.com/Tom-R-Main/execuTerm/releases/tag/$TAG}"
 
 work_dir="$(mktemp -d)"
 cleanup() {

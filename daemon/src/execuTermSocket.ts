@@ -11,6 +11,10 @@ import type {
   BrowserOpenResult,
 } from './types.js';
 
+interface SurfaceReadTextResult {
+  text?: string;
+}
+
 interface PendingRequest {
   resolve: (value: unknown) => void;
   reject: (reason: Error) => void;
@@ -25,12 +29,12 @@ interface RpcResponse {
 }
 
 /**
- * cmux socket client supporting both v2 JSON-RPC and v1 text commands.
+ * execuTerm socket client supporting both v2 JSON-RPC and v1 text commands.
  *
  * Protocol detection is server-side: lines starting with '{' are v2 JSON-RPC,
  * everything else is v1 text. Both share the same Unix socket.
  */
-export class CmuxSocket {
+export class ExecuTermSocket {
   private socket: net.Socket | null = null;
   private pending = new Map<string, PendingRequest>();
   private buffer = '';
@@ -68,31 +72,49 @@ export class CmuxSocket {
   }
 
   /**
-   * Discover the cmux socket path using the same priority as the CLI:
-   * 1. CMUX_SOCKET_PATH / CMUX_SOCKET env vars
-   * 2. ~/Library/Application Support/cmux/cmux.sock (stable release)
-   * 3. /tmp/cmux.sock (legacy fallback)
-   * 4. /tmp/cmux-debug.sock (debug build)
+   * Discover the execuTerm socket path:
+   * 1. EXECUTERM_SOCKET_PATH env var (new)
+   * 2. CMUX_SOCKET_PATH / CMUX_SOCKET env vars (legacy fallback)
+   * 3. ~/Library/Application Support/execuTerm/execuTerm.sock (new stable release)
+   * 4. ~/Library/Application Support/cmux/cmux.sock (legacy stable release)
+   * 5. /tmp/cmux.sock (legacy fallback)
+   * 6. /tmp/cmux-debug.sock (debug build)
    */
   private discoverSocketPath(): string {
-    const envPath =
-      process.env.CMUX_SOCKET_PATH || process.env.CMUX_SOCKET;
-    if (envPath && existsSync(envPath)) return envPath;
+    // New env var first
+    const newEnvPath = process.env.EXECUTERM_SOCKET_PATH;
+    if (newEnvPath && existsSync(newEnvPath)) return newEnvPath;
 
-    const appSupportPath = join(
+    // Legacy env vars
+    const legacyEnvPath =
+      process.env.CMUX_SOCKET_PATH || process.env.CMUX_SOCKET;
+    if (legacyEnvPath && existsSync(legacyEnvPath)) return legacyEnvPath;
+
+    // New app support path
+    const newAppSupportPath = join(
+      homedir(),
+      'Library',
+      'Application Support',
+      'execuTerm',
+      'execuTerm.sock'
+    );
+    if (existsSync(newAppSupportPath)) return newAppSupportPath;
+
+    // Legacy app support path
+    const legacyAppSupportPath = join(
       homedir(),
       'Library',
       'Application Support',
       'cmux',
       'cmux.sock'
     );
-    if (existsSync(appSupportPath)) return appSupportPath;
+    if (existsSync(legacyAppSupportPath)) return legacyAppSupportPath;
 
     if (existsSync('/tmp/cmux.sock')) return '/tmp/cmux.sock';
     if (existsSync('/tmp/cmux-debug.sock')) return '/tmp/cmux-debug.sock';
 
-    // Fall back to app support path (will fail to connect with a clear error)
-    return appSupportPath;
+    // Fall back to new app support path (will fail to connect with a clear error)
+    return newAppSupportPath;
   }
 
   private handleData(data: Buffer): void {
@@ -168,7 +190,7 @@ export class CmuxSocket {
     params?: Record<string, unknown>
   ): Promise<T> {
     if (!this.socket || !this.connected) {
-      throw new Error('Not connected to cmux socket');
+      throw new Error('Not connected to execuTerm socket');
     }
 
     const id = randomUUID();
@@ -192,7 +214,7 @@ export class CmuxSocket {
   /** Send a v1 text command (for set_status, clear_status, set_progress). */
   async sendV1(command: string): Promise<string> {
     if (!this.socket || !this.connected) {
-      throw new Error('Not connected to cmux socket');
+      throw new Error('Not connected to execuTerm socket');
     }
 
     const id = `v1:${randomUUID()}`;
@@ -258,6 +280,21 @@ export class CmuxSocket {
       'surface.list',
       workspaceId ? { workspace_id: workspaceId } : {}
     );
+  }
+
+  async surfaceReadText(opts?: {
+    workspaceId?: string;
+    surfaceId?: string;
+    scrollback?: boolean;
+    lines?: number;
+  }): Promise<string> {
+    const result = await this.send<SurfaceReadTextResult>('surface.read_text', {
+      ...(opts?.workspaceId ? { workspace_id: opts.workspaceId } : {}),
+      ...(opts?.surfaceId ? { surface_id: opts.surfaceId } : {}),
+      ...(opts?.scrollback ? { scrollback: true } : {}),
+      ...(opts?.lines ? { lines: opts.lines } : {}),
+    });
+    return result.text || '';
   }
 
   async surfaceSendText(text: string, surfaceId?: string): Promise<void> {

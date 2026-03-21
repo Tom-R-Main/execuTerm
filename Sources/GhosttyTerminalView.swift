@@ -835,7 +835,7 @@ private final class GhosttySurfaceCallbackContext {
 
 class GhosttyApp {
     static let shared = GhosttyApp()
-    private static let releaseBundleIdentifier = "com.cmuxterm.app"
+    private static let releaseBundleIdentifier = "com.execufunction.executerm"
     private static let backgroundLogTimestampFormatter: ISO8601DateFormatter = {
         let formatter = ISO8601DateFormatter()
         formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
@@ -849,12 +849,12 @@ class GhosttyApp {
     private static func resolveBackgroundLogURL(
         environment: [String: String] = ProcessInfo.processInfo.environment
     ) -> URL {
-        if let explicitPath = environment["CMUX_DEBUG_BG_LOG"],
+        if let explicitPath = environment["EXECUTERM_DEBUG_BG_LOG"] ?? environment["CMUX_DEBUG_BG_LOG"],
            !explicitPath.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             return URL(fileURLWithPath: explicitPath)
         }
 
-        if let debugLogPath = environment["CMUX_DEBUG_LOG"],
+        if let debugLogPath = environment["EXECUTERM_DEBUG_LOG"] ?? environment["CMUX_DEBUG_LOG"],
            !debugLogPath.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             let baseURL = URL(fileURLWithPath: debugLogPath)
             let extensionSeparatorIndex = baseURL.lastPathComponent.lastIndex(of: ".")
@@ -863,20 +863,22 @@ class GhosttyApp {
             return baseURL.deletingLastPathComponent().appendingPathComponent(bgName)
         }
 
-        return URL(fileURLWithPath: "/tmp/cmux-bg.log")
+        return URL(fileURLWithPath: "/tmp/executerm-bg.log")
     }
 
     let backgroundLogEnabled = {
-        if ProcessInfo.processInfo.environment["CMUX_DEBUG_BG"] == "1" {
+        if ProcessInfo.processInfo.environment["EXECUTERM_DEBUG_BG"] == "1"
+            || ProcessInfo.processInfo.environment["CMUX_DEBUG_BG"] == "1" {
             return true
         }
-        if ProcessInfo.processInfo.environment["CMUX_DEBUG_LOG"] != nil {
+        if ProcessInfo.processInfo.environment["EXECUTERM_DEBUG_LOG"] != nil
+            || ProcessInfo.processInfo.environment["CMUX_DEBUG_LOG"] != nil {
             return true
         }
         if ProcessInfo.processInfo.environment["GHOSTTYTABS_DEBUG_BG"] == "1" {
             return true
         }
-        if UserDefaults.standard.bool(forKey: "cmuxDebugBG") {
+        if UserDefaults.standard.bool(forKey: "execuTermDebugBG") {
             return true
         }
         return UserDefaults.standard.bool(forKey: "GhosttyTabsDebugBG")
@@ -980,7 +982,7 @@ class GhosttyApp {
     }
 
     #if DEBUG
-    private static let initLogPath = "/tmp/cmux-ghostty-init.log"
+    private static let initLogPath = "/tmp/executerm-ghostty-init.log"
 
     private static func initLog(_ message: String) {
         let timestamp = ISO8601DateFormatter().string(from: Date())
@@ -2542,11 +2544,11 @@ final class TerminalSurface: Identifiable, ObservableObject {
     var portOrdinal: Int = 0
     /// Snapshotted once per app session so all workspaces use consistent values
     private static let sessionPortBase: Int = {
-        let val = UserDefaults.standard.integer(forKey: "cmuxPortBase")
+        let val = UserDefaults.standard.integer(forKey: "execuTermPortBase")
         return val > 0 ? val : 9100
     }()
     private static let sessionPortRangeSize: Int = {
-        let val = UserDefaults.standard.integer(forKey: "cmuxPortRange")
+        let val = UserDefaults.standard.integer(forKey: "execuTermPortRange")
         return val > 0 ? val : 10
     }()
     private let surfaceContext: ghostty_surface_context_e
@@ -2921,8 +2923,8 @@ final class TerminalSurface: Identifiable, ObservableObject {
     }
 
     #if DEBUG
-    private static let surfaceLogPath = "/tmp/cmux-ghostty-surface.log"
-    private static let sizeLogPath = "/tmp/cmux-ghostty-size.log"
+    private static let surfaceLogPath = "/tmp/executerm-ghostty-surface.log"
+    private static let sizeLogPath = "/tmp/executerm-ghostty-size.log"
 
     func debugCurrentPixelSize() -> (width: UInt32, height: UInt32) {
         (lastPixelWidth, lastPixelHeight)
@@ -3119,17 +3121,23 @@ final class TerminalSurface: Identifiable, ObservableObject {
             protectedStartupEnvironmentKeys.insert(key)
         }
 
+        setManagedEnvironmentValue("EXECUTERM_SURFACE_ID", id.uuidString)
         setManagedEnvironmentValue("CMUX_SURFACE_ID", id.uuidString)
+        setManagedEnvironmentValue("EXECUTERM_WORKSPACE_ID", tabId.uuidString)
         setManagedEnvironmentValue("CMUX_WORKSPACE_ID", tabId.uuidString)
         // Backward-compatible shell integration keys used by existing scripts/tests.
+        setManagedEnvironmentValue("EXECUTERM_PANEL_ID", id.uuidString)
         setManagedEnvironmentValue("CMUX_PANEL_ID", id.uuidString)
+        setManagedEnvironmentValue("EXECUTERM_TAB_ID", tabId.uuidString)
         setManagedEnvironmentValue("CMUX_TAB_ID", tabId.uuidString)
         setManagedEnvironmentValue("CMUX_SOCKET_PATH", SocketControlSettings.socketPath())
         if let bundledCLIURL = Bundle.main.resourceURL?.appendingPathComponent("bin/cmux"),
            FileManager.default.isExecutableFile(atPath: bundledCLIURL.path) {
+            setManagedEnvironmentValue("EXECUTERM_BUNDLED_CLI_PATH", bundledCLIURL.path)
             setManagedEnvironmentValue("CMUX_BUNDLED_CLI_PATH", bundledCLIURL.path)
         }
         if let bundleId = Bundle.main.bundleIdentifier, !bundleId.isEmpty {
+            setManagedEnvironmentValue("EXECUTERM_BUNDLE_ID", bundleId)
             setManagedEnvironmentValue("CMUX_BUNDLE_ID", bundleId)
         }
 
@@ -3297,6 +3305,7 @@ final class TerminalSurface: Identifiable, ObservableObject {
         // Session scrollback replay must be one-shot. Reusing it on a later runtime
         // surface recreation would inject stale restored output into a live shell.
         additionalEnvironment.removeValue(forKey: SessionScrollbackReplayStore.environmentKey)
+        additionalEnvironment.removeValue(forKey: SessionScrollbackReplayStore.legacyEnvironmentKey)
 
         // For vsync-driven rendering, Ghostty needs to know which display we're on so it can
         // start a CVDisplayLink with the right refresh rate. If we don't set this early, the
@@ -3690,10 +3699,11 @@ final class TerminalSurface: Identifiable, ObservableObject {
 
 class GhosttyNSView: NSView, NSUserInterfaceValidations {
     private static let focusDebugEnabled: Bool = {
-        if ProcessInfo.processInfo.environment["CMUX_FOCUS_DEBUG"] == "1" {
+        if ProcessInfo.processInfo.environment["EXECUTERM_FOCUS_DEBUG"] == "1"
+            || ProcessInfo.processInfo.environment["CMUX_FOCUS_DEBUG"] == "1" {
             return true
         }
-        return UserDefaults.standard.bool(forKey: "cmuxFocusDebug")
+        return UserDefaults.standard.bool(forKey: "execuTermFocusDebug")
     }()
     private static let dropTypes: Set<NSPasteboard.PasteboardType> = [
         .string,
@@ -3747,10 +3757,11 @@ class GhosttyNSView: NSView, NSUserInterfaceValidations {
     }
 #if DEBUG
     private static let keyLatencyProbeEnabled: Bool = {
-        if ProcessInfo.processInfo.environment["CMUX_KEY_LATENCY_PROBE"] == "1" {
+        if ProcessInfo.processInfo.environment["EXECUTERM_KEY_LATENCY_PROBE"] == "1"
+            || ProcessInfo.processInfo.environment["CMUX_KEY_LATENCY_PROBE"] == "1" {
             return true
         }
-        return UserDefaults.standard.bool(forKey: "cmuxKeyLatencyProbe")
+        return UserDefaults.standard.bool(forKey: "execuTermKeyLatencyProbe")
     }()
     static var debugGhosttySurfaceKeyEventObserver: ((ghostty_input_key_s) -> Void)?
 #endif
@@ -5700,6 +5711,19 @@ class GhosttyNSView: NSView, NSUserInterfaceValidations {
             systemSymbolName: "rectangle.righthalf.inset.filled",
             accessibilityDescription: nil
         )
+
+        menu.addItem(.separator())
+        let addContextItem = menu.addItem(
+            withTitle: "Add Context...",
+            action: #selector(addContext(_:)),
+            keyEquivalent: ""
+        )
+        addContextItem.target = self
+        addContextItem.image = NSImage(
+            systemSymbolName: "plus.rectangle.on.folder",
+            accessibilityDescription: nil
+        )
+
         return menu
     }
 
@@ -5720,6 +5744,29 @@ class GhosttyNSView: NSView, NSUserInterfaceValidations {
 
     @objc private func splitVertically(_ sender: Any?) {
         _ = splitCurrentSurface(direction: .right)
+    }
+
+    @objc private func addContext(_ sender: Any?) {
+        guard let tabId,
+              let surfaceId = terminalSurface?.id,
+              let app = AppDelegate.shared,
+              let manager = app.tabManagerFor(tabId: tabId) ?? app.tabManager,
+              let workspace = manager.tabs.first(where: { $0.id == tabId }) else {
+            return
+        }
+
+        guard let dashboardURL = ExecuTermDaemonController.shared.dashboardURL,
+              let port = URLComponents(url: dashboardURL, resolvingAgainstBaseURL: false)?.port else {
+            return
+        }
+
+        let wsId = tabId.uuidString
+        let sfId = surfaceId.uuidString
+        guard let contextURL = URL(string: "http://127.0.0.1:\(port)/context?workspace=\(wsId)&surface=\(sfId)") else {
+            return
+        }
+
+        workspace.newBrowserSplit(from: surfaceId, orientation: .horizontal, url: contextURL)
     }
 
     @discardableResult

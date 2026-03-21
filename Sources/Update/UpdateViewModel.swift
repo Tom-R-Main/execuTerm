@@ -461,7 +461,7 @@ enum UpdateState: Equatable {
 
             if let semver = Self.extractSemanticVersion(from: version) {
                 let tag = semver.hasPrefix("v") ? semver : "v\(semver)"
-                if let url = URL(string: "https://github.com/manaflow-ai/cmux/releases/tag/\(tag)") {
+                if let url = URL(string: "https://github.com/Tom-R-Main/execuTerm/releases/tag/\(tag)") {
                     self = .tagged(url)
                     return
                 }
@@ -471,7 +471,7 @@ enum UpdateState: Equatable {
                 return nil
             }
 
-            if let url = URL(string: "https://github.com/manaflow-ai/cmux/commit/\(newHash)") {
+            if let url = URL(string: "https://github.com/Tom-R-Main/execuTerm/commit/\(newHash)") {
                 self = .commit(url)
             } else {
                 return nil

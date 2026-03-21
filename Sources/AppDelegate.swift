@@ -10,25 +10,26 @@ import ObjectiveC.runtime
 import Darwin
 
 private enum CmuxThemeNotifications {
-    static let reloadConfig = Notification.Name("com.cmuxterm.themes.reload-config")
+    static let reloadConfig = Notification.Name("com.execufunction.executerm.themes.reload-config")
 }
 
 #if DEBUG
 enum CmuxTypingTiming {
     static let isEnabled: Bool = {
         let environment = ProcessInfo.processInfo.environment
-        if environment["CMUX_TYPING_TIMING_LOGS"] == "1" || environment["CMUX_KEY_LATENCY_PROBE"] == "1" {
+        if environment["CMUX_TYPING_TIMING_LOGS"] == "1" || environment["CMUX_KEY_LATENCY_PROBE"] == "1"
+            || environment["EXECUTERM_TYPING_TIMING_LOGS"] == "1" || environment["EXECUTERM_KEY_LATENCY_PROBE"] == "1" {
             return true
         }
         let defaults = UserDefaults.standard
-        return defaults.bool(forKey: "cmuxTypingTimingLogs") || defaults.bool(forKey: "cmuxKeyLatencyProbe")
+        return defaults.bool(forKey: "execuTermTypingTimingLogs") || defaults.bool(forKey: "execuTermKeyLatencyProbe")
     }()
     static let isVerboseProbeEnabled: Bool = {
         let environment = ProcessInfo.processInfo.environment
-        if environment["CMUX_KEY_LATENCY_PROBE"] == "1" {
+        if environment["CMUX_KEY_LATENCY_PROBE"] == "1" || environment["EXECUTERM_KEY_LATENCY_PROBE"] == "1" {
             return true
         }
-        return UserDefaults.standard.bool(forKey: "cmuxKeyLatencyProbe")
+        return UserDefaults.standard.bool(forKey: "execuTermKeyLatencyProbe")
     }()
     private static let delayLogThresholdMs: Double = 6.0
     private static let durationLogThresholdMs: Double = 1.0
@@ -685,8 +686,8 @@ final class VSCodeServeWebController {
     static let shared = VSCodeServeWebController()
     private static let serveWebStartupTimeoutSeconds: TimeInterval = 60
 
-    private let queue = DispatchQueue(label: "cmux.vscode.serveWeb")
-    private let launchQueue = DispatchQueue(label: "cmux.vscode.serveWeb.launch")
+    private let queue = DispatchQueue(label: "com.execufunction.executerm.vscode.serveWeb")
+    private let launchQueue = DispatchQueue(label: "com.execufunction.executerm.vscode.serveWeb.launch")
     private let launchProcessOverride: ((URL, UInt64) -> (process: Process, url: URL)?)?
     private var serveWebProcess: Process?
     private var launchingProcess: Process?
@@ -1963,7 +1964,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         let display: SessionDisplaySnapshot?
     }
 
-    private static let persistedWindowGeometryDefaultsKey = "cmux.session.lastWindowGeometry.v1"
+    private static let persistedWindowGeometryDefaultsKey = "execuTerm.session.lastWindowGeometry.v1"
 
     weak var tabManager: TabManager?
     weak var notificationStore: TerminalNotificationStore?
@@ -2095,11 +2096,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
     private var sessionAutosaveTickInFlight = false
     private var sessionAutosaveDeferredRetryPending = false
     private let sessionPersistenceQueue = DispatchQueue(
-        label: "com.cmuxterm.app.sessionPersistence",
+        label: "com.execufunction.executerm.app.sessionPersistence",
         qos: .utility
     )
     private nonisolated static let launchServicesRegistrationQueue = DispatchQueue(
-        label: "com.cmuxterm.app.launchServicesRegistration",
+        label: "com.execufunction.executerm.app.launchServicesRegistration",
         qos: .utility
     )
     private nonisolated static func enqueueLaunchServicesRegistrationWork(_ work: @escaping @Sendable () -> Void) {
@@ -2192,10 +2193,45 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         }
     }
 
+    func applicationSupportsSecureRestorableState(_ app: NSApplication) -> Bool {
+        // execuTerm uses its own session snapshot model. Disabling AppKit window restoration
+        // avoids crashes from stale native saved-state geometry while keeping our custom
+        // restore path intact.
+        false
+    }
+
+    func application(_ application: NSApplication, shouldSaveApplicationState coder: NSCoder) -> Bool {
+        false
+    }
+
+    func application(_ application: NSApplication, shouldRestoreApplicationState coder: NSCoder) -> Bool {
+        false
+    }
+
     func applicationDidFinishLaunching(_ notification: Notification) {
         let env = ProcessInfo.processInfo.environment
         let isRunningUnderXCTest = isRunningUnderXCTest(env)
         let telemetryEnabled = TelemetrySettings.enabledForCurrentLaunch
+
+        // Migrate UserDefaults keys from cmux → execuTerm
+        let migrationPairs: [(old: String, new: String)] = [
+            ("cmuxKeyLatencyProbe", "execuTermKeyLatencyProbe"),
+            ("cmuxTypingTimingLogs", "execuTermTypingTimingLogs"),
+            ("cmuxShortcutMonitorTrace", "execuTermShortcutMonitorTrace"),
+            ("cmux.session.lastWindowGeometry.v1", "execuTerm.session.lastWindowGeometry.v1"),
+            ("cmuxDebugBG", "execuTermDebugBG"),
+            ("cmuxPortBase", "execuTermPortBase"),
+            ("cmuxPortRange", "execuTermPortRange"),
+            ("cmuxFocusDebug", "execuTermFocusDebug"),
+        ]
+        let migrationDefaults = UserDefaults.standard
+        for pair in migrationPairs {
+            if migrationDefaults.object(forKey: pair.new) == nil,
+               let oldValue = migrationDefaults.object(forKey: pair.old) {
+                migrationDefaults.set(oldValue, forKey: pair.new)
+                migrationDefaults.removeObject(forKey: pair.old)
+            }
+        }
 
         DistributedNotificationCenter.default().addObserver(
             self,
@@ -4623,7 +4659,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
            let window = ctx.window {
             return window
         }
-        let expectedIdentifier = "cmux.main.\(windowId.uuidString)"
+        let expectedIdentifier = "execuTerm.main.\(windowId.uuidString)"
         return NSApp.windows.first(where: { $0.identifier?.rawValue == expectedIdentifier })
     }
 
@@ -4637,7 +4673,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
 
     private func mainWindowId(from window: NSWindow) -> UUID? {
         guard let raw = window.identifier?.rawValue else { return nil }
-        let prefix = "cmux.main."
+        let prefix = "execuTerm.main."
         guard raw.hasPrefix(prefix) else { return nil }
         let suffix = String(raw.dropFirst(prefix.count))
         return UUID(uuidString: suffix)
@@ -4757,8 +4793,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
             return context.windowId
         }
         guard let rawIdentifier = window.identifier?.rawValue,
-              rawIdentifier.hasPrefix("cmux.main.") else { return nil }
-        let idPart = String(rawIdentifier.dropFirst("cmux.main.".count))
+              rawIdentifier.hasPrefix("execuTerm.main.") else { return nil }
+        let idPart = String(rawIdentifier.dropFirst("execuTerm.main.".count))
         return UUID(uuidString: idPart)
     }
 
@@ -5603,7 +5639,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
     }
 
     func sendWelcomeCommandWhenReady(to workspace: Workspace, markShownOnSend: Bool = false) {
-        sendTextWhenReady("cmux welcome\n", to: workspace) {
+        sendTextWhenReady("execuTerm welcome\n", to: workspace) {
             if markShownOnSend {
                 UserDefaults.standard.set(true, forKey: WelcomeSettings.shownKey)
             }
@@ -6690,7 +6726,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         func hasMainTerminalWindow() -> Bool {
             NSApp.windows.contains { window in
                 guard let raw = window.identifier?.rawValue else { return false }
-                return raw == "cmux.main" || raw.hasPrefix("cmux.main.")
+                return raw == "execuTerm.main" || raw.hasPrefix("execuTerm.main.")
             }
         }
 
@@ -8174,7 +8210,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
                 CmuxTypingTiming.logEventDelay(path: "appMonitor", event: event)
                 let shortcutMonitorTraceEnabled =
                     ProcessInfo.processInfo.environment["CMUX_SHORTCUT_MONITOR_TRACE"] == "1"
-                    || UserDefaults.standard.bool(forKey: "cmuxShortcutMonitorTrace")
+                    || ProcessInfo.processInfo.environment["EXECUTERM_SHORTCUT_MONITOR_TRACE"] == "1"
+                    || UserDefaults.standard.bool(forKey: "execuTermShortcutMonitorTrace")
                 if shortcutMonitorTraceEnabled {
                     let frType = NSApp.keyWindow?.firstResponder.map { String(describing: type(of: $0)) } ?? "nil"
                     dlog(
@@ -8397,7 +8434,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
 
         let alert = NSAlert()
         alert.alertStyle = .warning
-        alert.messageText = String(localized: "dialog.quitCmux.title", defaultValue: "Quit cmux?")
+        alert.messageText = String(localized: "dialog.quitCmux.title", defaultValue: "Quit execuTerm?")
         alert.informativeText = String(localized: "dialog.quitCmux.message", defaultValue: "This will close all windows and workspaces.")
         alert.addButton(withTitle: String(localized: "dialog.quitCmux.quit", defaultValue: "Quit"))
         alert.addButton(withTitle: String(localized: "common.cancel", defaultValue: "Cancel"))
@@ -8977,7 +9014,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
             // event through the global shortcut handler first.
             if let targetWindow = [NSApp.keyWindow, event.window]
                 .compactMap({ $0 })
-                .first(where: { $0.identifier?.rawValue == "cmux.browser-popup" }) {
+                .first(where: { $0.identifier?.rawValue == "execuTerm.browser-popup" }) {
 #if DEBUG
                 dlog("shortcut.cmdW route=browserPopup")
 #endif
@@ -10553,7 +10590,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
             return true
         }
         guard let raw = window.identifier?.rawValue else { return false }
-        return raw == "cmux.main" || raw.hasPrefix("cmux.main.")
+        return raw == "execuTerm.main" || raw.hasPrefix("execuTerm.main.")
     }
 
     private func contextContainingTabId(_ tabId: UUID) -> MainWindowContext? {
@@ -10572,7 +10609,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
 
     func closeMainWindowContainingTabId(_ tabId: UUID) {
         guard let context = contextContainingTabId(tabId) else { return }
-        let expectedIdentifier = "cmux.main.\(context.windowId.uuidString)"
+        let expectedIdentifier = "execuTerm.main.\(context.windowId.uuidString)"
         let window: NSWindow? = context.window ?? NSApp.windows.first(where: { $0.identifier?.rawValue == expectedIdentifier })
         window?.performClose(nil)
     }
@@ -10620,7 +10657,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
     }
 
     private func openNotificationInContext(_ context: MainWindowContext, tabId: UUID, surfaceId: UUID?, notificationId: UUID?) -> Bool {
-        let expectedIdentifier = "cmux.main.\(context.windowId.uuidString)"
+        let expectedIdentifier = "execuTerm.main.\(context.windowId.uuidString)"
         let window: NSWindow? = context.window ?? NSApp.windows.first(where: { $0.identifier?.rawValue == expectedIdentifier })
         guard let window else {
 #if DEBUG
@@ -10907,7 +10944,7 @@ final class MenuBarExtraController: NSObject, NSMenuDelegate {
     private let clearAllItem = NSMenuItem(title: String(localized: "statusMenu.clearAll", defaultValue: "Clear All"), action: nil, keyEquivalent: "")
     private let checkForUpdatesItem = NSMenuItem(title: String(localized: "menu.checkForUpdates", defaultValue: "Check for Updates…"), action: nil, keyEquivalent: "")
     private let preferencesItem = NSMenuItem(title: String(localized: "menu.preferences", defaultValue: "Preferences…"), action: nil, keyEquivalent: "")
-    private let quitItem = NSMenuItem(title: String(localized: "menu.quitCmux", defaultValue: "Quit cmux"), action: nil, keyEquivalent: "")
+    private let quitItem = NSMenuItem(title: String(localized: "menu.quitCmux", defaultValue: "Quit execuTerm"), action: nil, keyEquivalent: "")
 
     private var notificationItems: [NSMenuItem] = []
     private let maxInlineNotificationItems = 6
@@ -11312,15 +11349,16 @@ enum MenuBarBuildHintFormatter {
         isDebugBuild: Bool = _isDebugAssertConfiguration()
     ) -> String? {
         guard isDebugBuild else { return nil }
-        let normalized = appName.trimmingCharacters(in: .whitespacesAndNewlines)
-        let prefix = "cmux DEV"
-        guard normalized.hasPrefix(prefix) else { return "Build: DEV" }
-
-        let suffix = String(normalized.dropFirst(prefix.count)).trimmingCharacters(in: .whitespacesAndNewlines)
-        if suffix.isEmpty {
-            return "Build: DEV (untagged)"
+        if let tag = ProcessInfo.processInfo.environment["CMUX_TAG"]?
+            .trimmingCharacters(in: .whitespacesAndNewlines),
+           !tag.isEmpty {
+            return "Build Tag: \(tag)"
         }
-        return "Build Tag: \(suffix)"
+        let normalized = appName.trimmingCharacters(in: .whitespacesAndNewlines)
+        if normalized.localizedCaseInsensitiveContains("staging") {
+            return "Build: STAGING"
+        }
+        return "Build: DEV"
     }
 
     private static func defaultAppName() -> String {

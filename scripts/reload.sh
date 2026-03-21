@@ -1,17 +1,19 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-APP_NAME="cmux DEV"
-BUNDLE_ID="com.cmuxterm.app.debug"
-BASE_APP_NAME="cmux DEV"
+APP_NAME="execuTerm"
+BUNDLE_ID="com.execufunction.executerm.debug"
+BASE_APP_NAME="execuTerm"
+APP_CONTAINER_NAME="$APP_NAME"
 DERIVED_DATA=""
 NAME_SET=0
 BUNDLE_SET=0
 DERIVED_SET=0
 TAG=""
+EXECUTERM_DEBUG_LOG=""
 CMUX_DEBUG_LOG=""
 CLI_PATH=""
-LAST_SOCKET_PATH_DIR="$HOME/Library/Application Support/cmux"
+LAST_SOCKET_PATH_DIR="$HOME/Library/Application Support/executerm"
 LAST_SOCKET_PATH_FILE="${LAST_SOCKET_PATH_DIR}/last-socket-path"
 
 write_dev_cli_shim() {
@@ -20,10 +22,10 @@ write_dev_cli_shim() {
   mkdir -p "$(dirname "$target")"
   cat > "$target" <<EOF
 #!/usr/bin/env bash
-# cmux dev shim (managed by scripts/reload.sh)
+# execuTerm dev shim (managed by scripts/reload.sh)
 set -euo pipefail
 
-CLI_PATH_FILE="/tmp/cmux-last-cli-path"
+CLI_PATH_FILE="/tmp/executerm-last-cli-path"
 CLI_PATH_OWNER="\$(stat -f '%u' "\$CLI_PATH_FILE" 2>/dev/null || stat -c '%u' "\$CLI_PATH_FILE" 2>/dev/null || echo -1)"
 if [[ -r "\$CLI_PATH_FILE" ]] && [[ ! -L "\$CLI_PATH_FILE" ]] && [[ "\$CLI_PATH_OWNER" == "\$(id -u)" ]]; then
   CLI_PATH="\$(cat "\$CLI_PATH_FILE")"
@@ -36,15 +38,15 @@ if [[ -x "$fallback_bin" ]]; then
   exec "$fallback_bin" "\$@"
 fi
 
-echo "error: no reload-selected dev cmux CLI found. Run ./scripts/reload.sh --tag <name> first." >&2
+echo "error: no reload-selected execuTerm dev CLI found. Run ./scripts/reload.sh --tag <name> first." >&2
 exit 1
 EOF
   chmod +x "$target"
 }
 
-select_cmux_shim_target() {
-  local app_cli_dir="/Applications/cmux.app/Contents/Resources/bin"
-  local marker="cmux dev shim (managed by scripts/reload.sh)"
+select_executerm_shim_target() {
+  local app_cli_dir="/Applications/execuTerm.app/Contents/Resources/bin"
+  local marker="execuTerm dev shim (managed by scripts/reload.sh)"
   local target=""
   local path_entry=""
   local candidate=""
@@ -59,7 +61,7 @@ select_cmux_shim_target() {
       break
     fi
     [[ -d "$path_entry" && -w "$path_entry" ]] || continue
-    candidate="$path_entry/cmux"
+    candidate="$path_entry/executerm-cli"
     if [[ ! -e "$candidate" ]]; then
       target="$candidate"
       break
@@ -78,7 +80,7 @@ select_cmux_shim_target() {
   # Fallback for PATH layouts where app CLI isn't listed or no earlier entries were writable.
   for path_entry in /opt/homebrew/bin /usr/local/bin "$HOME/.local/bin" "$HOME/bin"; do
     [[ -d "$path_entry" && -w "$path_entry" ]] || continue
-    candidate="$path_entry/cmux"
+    candidate="$path_entry/executerm-cli"
     if [[ ! -e "$candidate" ]]; then
       echo "$candidate"
       return 0
@@ -96,6 +98,7 @@ write_last_socket_path() {
   local socket_path="$1"
   mkdir -p "$LAST_SOCKET_PATH_DIR"
   echo "$socket_path" > "$LAST_SOCKET_PATH_FILE" || true
+  echo "$socket_path" > /tmp/executerm-last-socket-path || true
   echo "$socket_path" > /tmp/cmux-last-socket-path || true
 }
 
@@ -135,7 +138,12 @@ sanitize_path() {
 
 tagged_derived_data_path() {
   local slug="$1"
-  echo "$HOME/Library/Developer/Xcode/DerivedData/cmux-${slug}"
+  echo "$HOME/Library/Developer/Xcode/DerivedData/executerm-${slug}"
+}
+
+tagged_app_container_name() {
+  local tag="$1"
+  echo "execuTerm ${tag}"
 }
 
 print_tag_cleanup_reminder() {
@@ -146,8 +154,12 @@ print_tag_cleanup_reminder() {
   local -a stale_tags=()
 
   while IFS= read -r -d '' path; do
-    if [[ "$path" == /tmp/cmux-* ]]; then
+    if [[ "$path" == /tmp/executerm-* ]]; then
+      tag="${path#/tmp/executerm-}"
+    elif [[ "$path" == /tmp/cmux-* ]]; then
       tag="${path#/tmp/cmux-}"
+    elif [[ "$path" == "$HOME/Library/Developer/Xcode/DerivedData/executerm-"* ]]; then
+      tag="${path#$HOME/Library/Developer/Xcode/DerivedData/executerm-}"
     elif [[ "$path" == "$HOME/Library/Developer/Xcode/DerivedData/cmux-"* ]]; then
       tag="${path#$HOME/Library/Developer/Xcode/DerivedData/cmux-}"
     else
@@ -166,7 +178,9 @@ print_tag_cleanup_reminder() {
     seen="${seen}${tag} "
     stale_tags+=("$tag")
   done < <(
+    find /tmp -maxdepth 1 -name 'executerm-*' -print0 2>/dev/null
     find /tmp -maxdepth 1 -name 'cmux-*' -print0 2>/dev/null
+    find "$HOME/Library/Developer/Xcode/DerivedData" -maxdepth 1 -type d -name 'executerm-*' -print0 2>/dev/null
     find "$HOME/Library/Developer/Xcode/DerivedData" -maxdepth 1 -type d -name 'cmux-*' -print0 2>/dev/null
   )
 
@@ -183,17 +197,17 @@ print_tag_cleanup_reminder() {
     done
     echo "Cleanup stale tags only:"
     for tag in "${stale_tags[@]}"; do
-      echo "  pkill -f \"cmux DEV ${tag}.app/Contents/MacOS/cmux DEV\""
-      echo "  rm -rf \"$(tagged_derived_data_path "$tag")\" \"/tmp/cmux-${tag}\" \"/tmp/cmux-debug-${tag}.sock\""
-      echo "  rm -f \"/tmp/cmux-debug-${tag}.log\""
-      echo "  rm -f \"$HOME/Library/Application Support/cmux/cmuxd-dev-${tag}.sock\""
+      echo "  pkill -f \"$(tagged_app_container_name "$tag").app/Contents/MacOS/${BASE_APP_NAME}\""
+      echo "  rm -rf \"$(tagged_derived_data_path "$tag")\" \"/tmp/executerm-${tag}\" \"/tmp/executerm-debug-${tag}.sock\""
+      echo "  rm -f \"/tmp/executerm-debug-${tag}.log\""
+      echo "  rm -f \"$HOME/Library/Application Support/executerm/executerm-daemon-dev-${tag}.sock\""
     done
   fi
   echo "After you verify current tag, cleanup command:"
-  echo "  pkill -f \"cmux DEV ${current_slug}.app/Contents/MacOS/cmux DEV\""
-  echo "  rm -rf \"$(tagged_derived_data_path "$current_slug")\" \"/tmp/cmux-${current_slug}\" \"/tmp/cmux-debug-${current_slug}.sock\""
-  echo "  rm -f \"/tmp/cmux-debug-${current_slug}.log\""
-  echo "  rm -f \"$HOME/Library/Application Support/cmux/cmuxd-dev-${current_slug}.sock\""
+  echo "  pkill -f \"$(tagged_app_container_name "$current_slug").app/Contents/MacOS/${BASE_APP_NAME}\""
+  echo "  rm -rf \"$(tagged_derived_data_path "$current_slug")\" \"/tmp/executerm-${current_slug}\" \"/tmp/executerm-debug-${current_slug}.sock\""
+  echo "  rm -f \"/tmp/executerm-debug-${current_slug}.log\""
+  echo "  rm -f \"$HOME/Library/Application Support/executerm/executerm-daemon-dev-${current_slug}.sock\""
 }
 
 while [[ $# -gt 0 ]]; do
@@ -254,11 +268,9 @@ fi
 if [[ -n "$TAG" ]]; then
   TAG_ID="$(sanitize_bundle "$TAG")"
   TAG_SLUG="$(sanitize_path "$TAG")"
-  if [[ "$NAME_SET" -eq 0 ]]; then
-    APP_NAME="cmux DEV ${TAG}"
-  fi
+  APP_CONTAINER_NAME="${APP_NAME} ${TAG}"
   if [[ "$BUNDLE_SET" -eq 0 ]]; then
-    BUNDLE_ID="com.cmuxterm.app.debug.${TAG_ID}"
+    BUNDLE_ID="com.execufunction.executerm.debug.${TAG_ID}"
   fi
   if [[ "$DERIVED_SET" -eq 0 ]]; then
     DERIVED_DATA="$(tagged_derived_data_path "$TAG_SLUG")"
@@ -283,7 +295,7 @@ if [[ -z "$TAG" ]]; then
 fi
 XCODEBUILD_ARGS+=(build)
 
-XCODE_LOG="/tmp/cmux-xcodebuild-${TAG_SLUG}.log"
+XCODE_LOG="/tmp/executerm-xcodebuild-${TAG_SLUG}.log"
 xcodebuild "${XCODEBUILD_ARGS[@]}" 2>&1 | tee "$XCODE_LOG" | grep -E '(warning:|error:|fatal:|BUILD FAILED|BUILD SUCCEEDED|\*\* BUILD)' || true
 XCODE_EXIT="${PIPESTATUS[0]}"
 echo "Full build log: $XCODE_LOG"
@@ -294,10 +306,7 @@ fi
 sleep 0.2
 
 FALLBACK_APP_NAME="$BASE_APP_NAME"
-SEARCH_APP_NAME="$APP_NAME"
-if [[ -n "$TAG" ]]; then
-  SEARCH_APP_NAME="$BASE_APP_NAME"
-fi
+SEARCH_APP_NAME="$BASE_APP_NAME"
 if [[ -n "$DERIVED_DATA" ]]; then
   APP_PATH="${DERIVED_DATA}/Build/Products/Debug/${SEARCH_APP_NAME}.app"
   if [[ ! -d "${APP_PATH}" && "$SEARCH_APP_NAME" != "$FALLBACK_APP_NAME" ]]; then
@@ -328,12 +337,12 @@ else
   fi
 fi
 if [[ -z "${APP_PATH}" || ! -d "${APP_PATH}" ]]; then
-  echo "${APP_NAME}.app not found in DerivedData" >&2
+  echo "${APP_CONTAINER_NAME}.app not found in DerivedData" >&2
   exit 1
 fi
 
 if [[ -n "${TAG_SLUG:-}" ]]; then
-  TMP_COMPAT_DERIVED_LINK="/tmp/cmux-${TAG_SLUG}"
+  TMP_COMPAT_DERIVED_LINK="/tmp/executerm-${TAG_SLUG}"
   if [[ "$DERIVED_DATA" != "$TMP_COMPAT_DERIVED_LINK" ]]; then
     ABS_DERIVED_DATA="$(cd "$DERIVED_DATA" && pwd)"
     rm -rf "$TMP_COMPAT_DERIVED_LINK"
@@ -341,8 +350,8 @@ if [[ -n "${TAG_SLUG:-}" ]]; then
   fi
 fi
 
-if [[ -n "$TAG" && "$APP_NAME" != "$SEARCH_APP_NAME" ]]; then
-  TAG_APP_PATH="$(dirname "$APP_PATH")/${APP_NAME}.app"
+if [[ -n "$TAG" ]]; then
+  TAG_APP_PATH="$(dirname "$APP_PATH")/${APP_CONTAINER_NAME}.app"
   rm -rf "$TAG_APP_PATH"
   cp -R "$APP_PATH" "$TAG_APP_PATH"
   INFO_PLIST="$TAG_APP_PATH/Contents/Info.plist"
@@ -354,11 +363,13 @@ if [[ -n "$TAG" && "$APP_NAME" != "$SEARCH_APP_NAME" ]]; then
     /usr/libexec/PlistBuddy -c "Set :CFBundleIdentifier $BUNDLE_ID" "$INFO_PLIST" 2>/dev/null \
       || /usr/libexec/PlistBuddy -c "Add :CFBundleIdentifier string $BUNDLE_ID" "$INFO_PLIST"
     if [[ -n "${TAG_SLUG:-}" ]]; then
-      APP_SUPPORT_DIR="$HOME/Library/Application Support/cmux"
-      CMUXD_SOCKET="${APP_SUPPORT_DIR}/cmuxd-dev-${TAG_SLUG}.sock"
-      CMUX_SOCKET="/tmp/cmux-debug-${TAG_SLUG}.sock"
-      CMUX_DEBUG_LOG="/tmp/cmux-debug-${TAG_SLUG}.log"
+      APP_SUPPORT_DIR="$HOME/Library/Application Support/executerm"
+      CMUXD_SOCKET="${APP_SUPPORT_DIR}/executerm-daemon-dev-${TAG_SLUG}.sock"
+      CMUX_SOCKET="/tmp/executerm-debug-${TAG_SLUG}.sock"
+      CMUX_DEBUG_LOG="/tmp/executerm-debug-${TAG_SLUG}.log"
+      EXECUTERM_DEBUG_LOG="$CMUX_DEBUG_LOG"
       write_last_socket_path "$CMUX_SOCKET"
+      echo "$CMUX_DEBUG_LOG" > /tmp/executerm-last-debug-log-path || true
       echo "$CMUX_DEBUG_LOG" > /tmp/cmux-last-debug-log-path || true
       /usr/libexec/PlistBuddy -c "Add :LSEnvironment dict" "$INFO_PLIST" 2>/dev/null || true
       /usr/libexec/PlistBuddy -c "Set :LSEnvironment:CMUXD_UNIX_PATH \"${CMUXD_SOCKET}\"" "$INFO_PLIST" 2>/dev/null \
@@ -373,6 +384,8 @@ if [[ -n "$TAG" && "$APP_NAME" != "$SEARCH_APP_NAME" ]]; then
         || /usr/libexec/PlistBuddy -c "Add :LSEnvironment:CMUX_SOCKET_MODE string automation" "$INFO_PLIST"
       /usr/libexec/PlistBuddy -c "Set :LSEnvironment:CMUX_REMOTE_DAEMON_ALLOW_LOCAL_BUILD 1" "$INFO_PLIST" 2>/dev/null \
         || /usr/libexec/PlistBuddy -c "Add :LSEnvironment:CMUX_REMOTE_DAEMON_ALLOW_LOCAL_BUILD string 1" "$INFO_PLIST"
+      /usr/libexec/PlistBuddy -c "Set :LSEnvironment:EXECUTERM_REPO_ROOT \"${PWD}\"" "$INFO_PLIST" 2>/dev/null \
+        || /usr/libexec/PlistBuddy -c "Add :LSEnvironment:EXECUTERM_REPO_ROOT string \"${PWD}\"" "$INFO_PLIST"
       /usr/libexec/PlistBuddy -c "Set :LSEnvironment:CMUXTERM_REPO_ROOT \"${PWD}\"" "$INFO_PLIST" 2>/dev/null \
         || /usr/libexec/PlistBuddy -c "Add :LSEnvironment:CMUXTERM_REPO_ROOT string \"${PWD}\"" "$INFO_PLIST"
       if [[ -S "$CMUXD_SOCKET" ]]; then
@@ -392,16 +405,21 @@ fi
 
 CLI_PATH="$(dirname "$APP_PATH")/cmux"
 if [[ -x "$CLI_PATH" ]]; then
+  (umask 077; printf '%s\n' "$CLI_PATH" > /tmp/executerm-last-cli-path) || true
   (umask 077; printf '%s\n' "$CLI_PATH" > /tmp/cmux-last-cli-path) || true
+  ln -sfn "$CLI_PATH" /tmp/executerm-cli || true
   ln -sfn "$CLI_PATH" /tmp/cmux-cli || true
 
   # Stable shim that always follows the last reload-selected dev CLI.
-  DEV_CLI_SHIM="$HOME/.local/bin/cmux-dev"
-  write_dev_cli_shim "$DEV_CLI_SHIM" "/Applications/cmux.app/Contents/Resources/bin/cmux"
+  DEV_CLI_SHIM="$HOME/.local/bin/executerm-dev"
+  write_dev_cli_shim "$DEV_CLI_SHIM" "/Applications/execuTerm.app/Contents/Resources/bin/cmux"
+  # Compat: also update old shim name
+  OLD_DEV_CLI_SHIM="$HOME/.local/bin/cmux-dev"
+  write_dev_cli_shim "$OLD_DEV_CLI_SHIM" "/Applications/execuTerm.app/Contents/Resources/bin/cmux"
 
-  CMUX_SHIM_TARGET="$(select_cmux_shim_target || true)"
-  if [[ -n "${CMUX_SHIM_TARGET:-}" ]]; then
-    write_dev_cli_shim "$CMUX_SHIM_TARGET" "/Applications/cmux.app/Contents/Resources/bin/cmux"
+  EXECUTERM_SHIM_TARGET="$(select_executerm_shim_target || true)"
+  if [[ -n "${EXECUTERM_SHIM_TARGET:-}" ]]; then
+    write_dev_cli_shim "$EXECUTERM_SHIM_TARGET" "/Applications/execuTerm.app/Contents/Resources/bin/cmux"
   fi
 fi
 
@@ -413,10 +431,11 @@ if [[ -z "$TAG" ]]; then
   pkill -f "/${BASE_APP_NAME}.app/Contents/MacOS/${BASE_APP_NAME}" || true
 else
   # Tag mode: only kill the tagged instance; allow side-by-side with the main app.
-  pkill -f "${APP_NAME}.app/Contents/MacOS/${BASE_APP_NAME}" || true
+  pkill -f "${APP_CONTAINER_NAME}.app/Contents/MacOS/${BASE_APP_NAME}" || true
 fi
 sleep 0.3
-CMUXD_SRC="$PWD/cmuxd/zig-out/bin/cmuxd"
+EXECUTERM_DAEMON_SRC="$PWD/cmuxd/zig-out/bin/cmuxd"
+CMUXD_SRC="$EXECUTERM_DAEMON_SRC"
 GHOSTTY_HELPER_SRC="$PWD/ghostty/zig-out/bin/ghostty"
 if [[ -d "$PWD/cmuxd" ]]; then
   (cd "$PWD/cmuxd" && zig build -Doptimize=ReleaseFast)
@@ -448,10 +467,11 @@ if [[ -f "$DAEMON_SRC" ]]; then
 fi
 CLI_PATH="$APP_PATH/Contents/Resources/bin/cmux"
 if [[ -x "$CLI_PATH" ]]; then
+  echo "$CLI_PATH" > /tmp/executerm-last-cli-path || true
   echo "$CLI_PATH" > /tmp/cmux-last-cli-path || true
 fi
-# Avoid inheriting cmux/ghostty environment variables from the terminal that
-# runs this script (often inside another cmux instance), which can cause
+# Avoid inheriting execuTerm/ghostty environment variables from the terminal that
+# runs this script (often inside another execuTerm instance), which can cause
 # socket and resource-path conflicts.
 OPEN_CLEAN_ENV=(
   env
@@ -465,11 +485,14 @@ OPEN_CLEAN_ENV=(
   -u CMUX_DEBUG_LOG
   -u CMUX_BUNDLE_ID
   -u CMUX_SHELL_INTEGRATION
+  -u EXECUTERM_TAG
+  -u EXECUTERM_DEBUG_LOG
+  -u EXECUTERM_REPO_ROOT
   -u GHOSTTY_BIN_DIR
   -u GHOSTTY_RESOURCES_DIR
   -u GHOSTTY_SHELL_FEATURES
   # Dev shells (including CI/Codex) often force-disable paging by exporting these.
-  # Don't leak that into cmux, otherwise `git diff` won't page even with PAGER=less.
+  # Don't leak that into execuTerm, otherwise `git diff` won't page even with PAGER=less.
   -u GIT_PAGER
   -u GH_PAGER
   -u TERMINFO
@@ -478,11 +501,13 @@ OPEN_CLEAN_ENV=(
 
 if [[ -n "${TAG_SLUG:-}" && -n "${CMUX_SOCKET:-}" ]]; then
   # Ensure tag-specific socket paths win even if the caller has CMUX_* overrides.
-  "${OPEN_CLEAN_ENV[@]}" CMUX_TAG="$TAG_SLUG" CMUX_SOCKET_ENABLE=1 CMUX_SOCKET_MODE=automation CMUX_SOCKET_PATH="$CMUX_SOCKET" CMUXD_UNIX_PATH="$CMUXD_SOCKET" CMUX_DEBUG_LOG="$CMUX_DEBUG_LOG" CMUX_REMOTE_DAEMON_ALLOW_LOCAL_BUILD=1 CMUXTERM_REPO_ROOT="$PWD" open -g "$APP_PATH"
+  "${OPEN_CLEAN_ENV[@]}" EXECUTERM_TAG="$TAG_SLUG" CMUX_TAG="$TAG_SLUG" CMUX_SOCKET_ENABLE=1 CMUX_SOCKET_MODE=automation CMUX_SOCKET_PATH="$CMUX_SOCKET" CMUXD_UNIX_PATH="$CMUXD_SOCKET" EXECUTERM_DEBUG_LOG="$CMUX_DEBUG_LOG" CMUX_DEBUG_LOG="$CMUX_DEBUG_LOG" CMUX_REMOTE_DAEMON_ALLOW_LOCAL_BUILD=1 EXECUTERM_REPO_ROOT="$PWD" CMUXTERM_REPO_ROOT="$PWD" open -g "$APP_PATH"
 elif [[ -n "${TAG_SLUG:-}" ]]; then
-  "${OPEN_CLEAN_ENV[@]}" CMUX_TAG="$TAG_SLUG" CMUX_SOCKET_ENABLE=1 CMUX_SOCKET_MODE=automation CMUX_DEBUG_LOG="$CMUX_DEBUG_LOG" CMUX_REMOTE_DAEMON_ALLOW_LOCAL_BUILD=1 CMUXTERM_REPO_ROOT="$PWD" open -g "$APP_PATH"
+  "${OPEN_CLEAN_ENV[@]}" EXECUTERM_TAG="$TAG_SLUG" CMUX_TAG="$TAG_SLUG" CMUX_SOCKET_ENABLE=1 CMUX_SOCKET_MODE=automation EXECUTERM_DEBUG_LOG="$CMUX_DEBUG_LOG" CMUX_DEBUG_LOG="$CMUX_DEBUG_LOG" CMUX_REMOTE_DAEMON_ALLOW_LOCAL_BUILD=1 EXECUTERM_REPO_ROOT="$PWD" CMUXTERM_REPO_ROOT="$PWD" open -g "$APP_PATH"
 else
+  echo "/tmp/executerm-debug.sock" > /tmp/executerm-last-socket-path || true
   echo "/tmp/cmux-debug.sock" > /tmp/cmux-last-socket-path || true
+  echo "/tmp/executerm-debug.log" > /tmp/executerm-last-debug-log-path || true
   echo "/tmp/cmux-debug.log" > /tmp/cmux-last-debug-log-path || true
   "${OPEN_CLEAN_ENV[@]}" open -g "$APP_PATH"
 fi
@@ -516,10 +541,10 @@ if [[ -x "${CLI_PATH:-}" ]]; then
   echo "CLI path:"
   echo "  $CLI_PATH"
   echo "CLI helpers:"
-  echo "  /tmp/cmux-cli ..."
-  echo "  $HOME/.local/bin/cmux-dev ..."
-  if [[ -n "${CMUX_SHIM_TARGET:-}" ]]; then
-    echo "  $CMUX_SHIM_TARGET ..."
+  echo "  /tmp/executerm-cli ..."
+  echo "  $HOME/.local/bin/executerm-dev ..."
+  if [[ -n "${EXECUTERM_SHIM_TARGET:-}" ]]; then
+    echo "  $EXECUTERM_SHIM_TARGET ..."
   fi
-  echo "If your shell still resolves the old cmux, run: rehash"
+  echo "If your shell still resolves the old executerm-cli, run: rehash"
 fi

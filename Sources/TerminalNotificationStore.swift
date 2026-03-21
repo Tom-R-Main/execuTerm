@@ -35,7 +35,7 @@ enum NotificationSoundSettings {
     static let customFileValue = "custom_file"
     static let customFilePathKey = "notificationSoundCustomFilePath"
     static let defaultCustomFilePath = ""
-    private static let stagedCustomSoundBaseName = "cmux-custom-notification-sound"
+    private static let stagedCustomSoundBaseName = "executerm-custom-notification-sound"
     private static let customSoundPreparationQueue = DispatchQueue(
         label: "com.cmuxterm.notification-sound-preparation",
         qos: .utility
@@ -582,7 +582,7 @@ enum AppFocusState {
         // Only treat the app as "focused" for notification suppression when a main terminal window
         // is key. If Settings/About/debug panels are key, we still want notifications to show.
         if let raw = keyWindow.identifier?.rawValue {
-            return raw == "cmux.main" || raw.hasPrefix("cmux.main.")
+            return raw == "execuTerm.main" || raw.hasPrefix("execuTerm.main.")
         }
         return false
     }
@@ -792,13 +792,13 @@ final class TerminalNotificationStore: ObservableObject {
             guard let self, authorized else { return }
 
             let content = UNMutableNotificationContent()
-            content.title = "cmux test notification"
+            content.title = "execuTerm test notification"
             content.body = "Desktop notifications are enabled."
             content.sound = NotificationSoundSettings.sound()
             content.categoryIdentifier = Self.categoryIdentifier
 
             let request = UNNotificationRequest(
-                identifier: "cmux.settings.test.\(UUID().uuidString)",
+                identifier: "execuTerm.settings.test.\(UUID().uuidString)",
                 content: content,
                 trigger: nil
             )
@@ -869,7 +869,7 @@ final class TerminalNotificationStore: ObservableObject {
             subtitle: subtitle,
             body: body,
             createdAt: Date(),
-            isRead: false
+            isRead: shouldSuppressExternalDelivery
         )
         updated.insert(notification, at: 0)
         notifications = updated
@@ -1012,7 +1012,7 @@ final class TerminalNotificationStore: ObservableObject {
             let content = UNMutableNotificationContent()
             let appName = Bundle.main.object(forInfoDictionaryKey: "CFBundleDisplayName") as? String
                 ?? Bundle.main.object(forInfoDictionaryKey: "CFBundleName") as? String
-                ?? "cmux"
+                ?? "execuTerm"
             content.title = notification.title.isEmpty ? appName : notification.title
             content.subtitle = notification.subtitle
             content.body = notification.body

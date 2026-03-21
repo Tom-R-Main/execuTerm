@@ -227,13 +227,13 @@ Manual release steps (if not using the command):
 ```bash
 git tag vX.Y.Z
 git push origin vX.Y.Z
-gh run watch --repo manaflow-ai/cmux
+gh run watch --repo Tom-R-Main/execuTerm
 ```
 
 Notes:
 - Requires GitHub secrets: `APPLE_CERTIFICATE_BASE64`, `APPLE_CERTIFICATE_PASSWORD`,
   `APPLE_SIGNING_IDENTITY`, `APPLE_ID`, `APPLE_APP_SPECIFIC_PASSWORD`, `APPLE_TEAM_ID`.
-- The release asset is `cmux-macos.dmg` attached to the tag.
-- README download button points to `releases/latest/download/cmux-macos.dmg`.
+- The release asset is `execuTerm-macos.dmg` attached to the tag.
+- README download button points to `releases/latest/download/execuTerm-macos.dmg`.
 - Versioning: bump the minor version for updates unless explicitly asked otherwise.
 - Changelog: update `CHANGELOG.md`; docs changelog is rendered from it.

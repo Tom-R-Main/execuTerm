@@ -45,7 +45,7 @@ export function GitHubStarsBadge({
 
   return (
     <a
-      href="https://github.com/manaflow-ai/cmux"
+      href="https://github.com/Tom-R-Main/execuTerm"
       target="_blank"
       rel="noopener noreferrer"
       onClick={() =>

@@ -104,11 +104,11 @@ fi
 
 TAG_ID="$(sanitize_bundle "$TAG")"
 TAG_SLUG="$(sanitize_path "$TAG")"
-APP="$HOME/Library/Developer/Xcode/DerivedData/cmux-${TAG_SLUG}/Build/Products/Debug/cmux DEV ${TAG}.app"
-BID="com.cmuxterm.app.debug.${TAG_ID}"
-SOCK="/tmp/cmux-debug-${TAG_SLUG}.sock"
-DSOCK="$HOME/Library/Application Support/cmux/cmuxd-dev-${TAG_SLUG}.sock"
-LOG="/tmp/cmux-debug-${TAG_SLUG}.log"
+APP="$HOME/Library/Developer/Xcode/DerivedData/executerm-${TAG_SLUG}/Build/Products/Debug/execuTerm ${TAG}.app"
+BID="com.execufunction.executerm.debug.${TAG_ID}"
+SOCK="/tmp/executerm-debug-${TAG_SLUG}.sock"
+DSOCK="$HOME/Library/Application Support/executerm/executerm-daemon-dev-${TAG_SLUG}.sock"
+LOG="/tmp/executerm-debug-${TAG_SLUG}.log"
 
 if [[ ! -d "$APP" ]]; then
   echo "error: tagged app not found at $APP" >&2
@@ -117,7 +117,7 @@ fi
 
 /usr/bin/osascript -e "tell application id \"${BID}\" to quit" >/dev/null 2>&1 || true
 sleep 0.5
-pkill -f "cmux DEV ${TAG}.app/Contents/MacOS/cmux DEV" || true
+pkill -f "execuTerm ${TAG}.app/Contents/MacOS/execuTerm" || true
 rm -f "$SOCK" "$DSOCK"
 sleep 0.5
 
@@ -139,6 +139,9 @@ OPEN_ENV=(
   -u CMUX_SHELL_INTEGRATION
   -u CMUX_SHELL_INTEGRATION_DIR
   -u CMUX_LOAD_GHOSTTY_ZSH_INTEGRATION
+  -u EXECUTERM_TAG
+  -u EXECUTERM_DEBUG_LOG
+  -u EXECUTERM_REPO_ROOT
   -u GHOSTTY_BIN_DIR
   -u GHOSTTY_RESOURCES_DIR
   -u GHOSTTY_SHELL_FEATURES
@@ -150,6 +153,7 @@ OPEN_ENV=(
   "CMUX_SOCKET_PATH=${SOCK}"
   "CMUXD_UNIX_PATH=${DSOCK}"
   "CMUX_DEBUG_LOG=${LOG}"
+  "EXECUTERM_DEBUG_LOG=${LOG}"
 )
 
 for kv in "${EXTRA_ENV[@]}"; do
@@ -174,7 +178,7 @@ fi
 echo "app: $APP"
 echo "bundle_id: $BID"
 echo "socket: $SOCK"
-echo "cmuxd_socket: $DSOCK"
+echo "executerm_daemon_socket: $DSOCK"
 echo "log: $LOG"
 echo "mode: $MODE"
 echo "socket_ready: $(if [[ -S "$SOCK" ]]; then echo yes; else echo no; fi)"

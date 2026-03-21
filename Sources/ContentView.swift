@@ -876,7 +876,7 @@ final class FileDropOverlayView: NSView {
 
 var fileDropOverlayKey: UInt8 = 0
 private var commandPaletteWindowOverlayKey: UInt8 = 0
-let commandPaletteOverlayContainerIdentifier = NSUserInterfaceItemIdentifier("cmux.commandPalette.overlay.container")
+let commandPaletteOverlayContainerIdentifier = NSUserInterfaceItemIdentifier("execuTerm.commandPalette.overlay.container")
 
 enum CommandPaletteOverlayPromotionPolicy {
     static func shouldPromote(previouslyVisible: Bool, isVisible: Bool) -> Bool {
@@ -2085,7 +2085,7 @@ struct ContentView: View {
     @AppStorage("debugTitlebarLeadingExtra") private var debugTitlebarLeadingExtra: Double = 0
 
     @State private var titlebarLeadingInset: CGFloat = 12
-    private var windowIdentifier: String { "cmux.main.\(windowId.uuidString)" }
+    private var windowIdentifier: String { "execuTerm.main.\(windowId.uuidString)" }
     private var fakeTitlebarTextColor: Color {
         _ = titlebarThemeGeneration
         let ghosttyBackground = GhosttyApp.shared.defaultBackgroundColor
@@ -3064,7 +3064,7 @@ struct ContentView: View {
     }
 
     private func setTitlebarControlsHidden(_ hidden: Bool, in window: NSWindow) {
-        let controlsId = NSUserInterfaceItemIdentifier("cmux.titlebarControls")
+        let controlsId = NSUserInterfaceItemIdentifier("execuTerm.titlebarControls")
         for accessory in window.titlebarAccessoryViewControllers {
             if accessory.view.identifier == controlsId {
                 accessory.isHidden = hidden
@@ -4942,7 +4942,7 @@ struct ContentView: View {
         contributions.append(
             CommandPaletteCommandContribution(
                 commandId: "palette.installCLI",
-                title: constant(String(localized: "command.installCLI.title", defaultValue: "Shell Command: Install 'cmux' in PATH")),
+                title: constant(String(localized: "command.installCLI.title", defaultValue: "Shell Command: Install 'execuTerm' in PATH")),
                 subtitle: constant(String(localized: "command.installCLI.subtitle", defaultValue: "CLI")),
                 keywords: ["install", "cli", "path", "shell", "command", "symlink"],
                 when: { !$0.bool(CommandPaletteContextKeys.cliInstalledInPATH) }
@@ -4951,7 +4951,7 @@ struct ContentView: View {
         contributions.append(
             CommandPaletteCommandContribution(
                 commandId: "palette.uninstallCLI",
-                title: constant(String(localized: "command.uninstallCLI.title", defaultValue: "Shell Command: Uninstall 'cmux' from PATH")),
+                title: constant(String(localized: "command.uninstallCLI.title", defaultValue: "Shell Command: Uninstall 'execuTerm' from PATH")),
                 subtitle: constant(String(localized: "command.uninstallCLI.subtitle", defaultValue: "CLI")),
                 keywords: ["uninstall", "remove", "cli", "path", "shell", "command", "symlink"],
                 when: { $0.bool(CommandPaletteContextKeys.cliInstalledInPATH) }
@@ -8293,7 +8293,7 @@ enum DevBuildBannerDebugSettings {
 private enum FeedbackComposerSettings {
     static let storedEmailKey = "sidebarHelpFeedbackEmail"
     static let endpointEnvironmentKey = "CMUX_FEEDBACK_API_URL"
-    static let defaultEndpoint = "https://www.cmux.dev/api/feedback"
+    static let defaultEndpoint = "https://github.com/Tom-R-Main/execuTerm/issues/new"
     static let foundersEmail = "founders@manaflow.com"
     static let maxMessageLength = 4_000
     static let maxAttachmentCount = 10
@@ -8616,8 +8616,8 @@ private enum FeedbackComposerClient {
 }
 
 enum SidebarDragLifecycleNotification {
-    static let stateDidChange = Notification.Name("cmux.sidebarDragStateDidChange")
-    static let requestClear = Notification.Name("cmux.sidebarDragRequestClear")
+    static let stateDidChange = Notification.Name("execuTerm.sidebarDragStateDidChange")
+    static let requestClear = Notification.Name("execuTerm.sidebarDragRequestClear")
     static let tabIdKey = "tabId"
     static let reasonKey = "reason"
 
@@ -9740,10 +9740,10 @@ enum FeedbackComposerBridge {
 }
 
 private struct SidebarHelpMenuButton: View {
-    private let docsURL = URL(string: "https://cmux.dev/docs")
-    private let changelogURL = URL(string: "https://cmux.dev/docs/changelog")
-    private let githubURL = URL(string: "https://github.com/manaflow-ai/cmux")
-    private let githubIssuesURL = URL(string: "https://github.com/manaflow-ai/cmux/issues")
+    private let docsURL = URL(string: "https://github.com/Tom-R-Main/execuTerm#readme")
+    private let changelogURL = URL(string: "https://github.com/Tom-R-Main/execuTerm/blob/main/CHANGELOG.md")
+    private let githubURL = URL(string: "https://github.com/Tom-R-Main/execuTerm")
+    private let githubIssuesURL = URL(string: "https://github.com/Tom-R-Main/execuTerm/issues")
     private let discordURL = URL(string: "https://discord.gg/xsgFEVrWCZ")
     private let helpTitle = String(localized: "sidebar.help.button", defaultValue: "Help")
     private let buttonSize: CGFloat = 22
@@ -9789,7 +9789,7 @@ private struct SidebarHelpMenuButton: View {
     private var helpPopover: some View {
         VStack(alignment: .leading, spacing: 2) {
             helpOptionButton(
-                title: String(localized: "sidebar.help.welcome", defaultValue: "Welcome to cmux!"),
+                title: String(localized: "sidebar.help.welcome", defaultValue: "Welcome to execuTerm!"),
                 action: .welcome,
                 accessibilityIdentifier: "SidebarHelpMenuOptionWelcome",
                 isExternalLink: false
@@ -12377,7 +12377,7 @@ private enum SidebarTabDragPayload {
     static let typeIdentifier = "com.cmux.sidebar-tab-reorder"
     static let dropContentType = UTType(exportedAs: typeIdentifier)
     static let dropContentTypes: [UTType] = [dropContentType]
-    private static let prefix = "cmux.sidebar-tab."
+    private static let prefix = "execuTerm.sidebar-tab."
 
     static func provider(for tabId: UUID) -> NSItemProvider {
         let provider = NSItemProvider()

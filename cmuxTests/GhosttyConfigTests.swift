@@ -315,7 +315,7 @@ final class GhosttyConfigTests: XCTestCase {
         try withTemporaryAppSupportDirectory { appSupportDirectory in
             let releaseConfigURL = try writeAppSupportConfig(
                 appSupportDirectory: appSupportDirectory,
-                bundleIdentifier: "com.cmuxterm.app",
+                bundleIdentifier: "com.execufunction.executerm",
                 filename: "config",
                 contents: "font-size = 13\n"
             )
@@ -334,7 +334,7 @@ final class GhosttyConfigTests: XCTestCase {
         try withTemporaryAppSupportDirectory { appSupportDirectory in
             _ = try writeAppSupportConfig(
                 appSupportDirectory: appSupportDirectory,
-                bundleIdentifier: "com.cmuxterm.app",
+                bundleIdentifier: "com.execufunction.executerm",
                 filename: "config",
                 contents: "font-size = 13\n"
             )
@@ -359,7 +359,7 @@ final class GhosttyConfigTests: XCTestCase {
         try withTemporaryAppSupportDirectory { appSupportDirectory in
             _ = try writeAppSupportConfig(
                 appSupportDirectory: appSupportDirectory,
-                bundleIdentifier: "com.cmuxterm.app",
+                bundleIdentifier: "com.execufunction.executerm",
                 filename: "config",
                 contents: "font-size = 13\n"
             )
@@ -377,7 +377,7 @@ final class GhosttyConfigTests: XCTestCase {
         try withTemporaryAppSupportDirectory { appSupportDirectory in
             _ = try writeAppSupportConfig(
                 appSupportDirectory: appSupportDirectory,
-                bundleIdentifier: "com.cmuxterm.app",
+                bundleIdentifier: "com.execufunction.executerm",
                 filename: "config.ghostty",
                 contents: ""
             )
@@ -1594,7 +1594,7 @@ final class SocketControlSettingsTests: XCTestCase {
             environment: [
                 "CMUX_SOCKET_PATH": "/tmp/cmux-debug-issue-153-tmux-compat.sock",
             ],
-            bundleIdentifier: "com.cmuxterm.app",
+            bundleIdentifier: "com.execufunction.executerm",
             isDebugBuild: false,
             probeStableDefaultPathEntry: { _ in .missing }
         )
@@ -1645,7 +1645,7 @@ final class SocketControlSettingsTests: XCTestCase {
                 "CMUX_SOCKET_PATH": "/tmp/cmux-debug-forced.sock",
                 "CMUX_ALLOW_SOCKET_OVERRIDE": "1",
             ],
-            bundleIdentifier: "com.cmuxterm.app",
+            bundleIdentifier: "com.execufunction.executerm",
             isDebugBuild: false,
             probeStableDefaultPathEntry: { _ in .missing }
         )
@@ -1656,7 +1656,7 @@ final class SocketControlSettingsTests: XCTestCase {
     func testDefaultSocketPathByChannel() {
         XCTAssertEqual(
             SocketControlSettings.defaultSocketPath(
-                bundleIdentifier: "com.cmuxterm.app",
+                bundleIdentifier: "com.execufunction.executerm",
                 isDebugBuild: false,
                 probeStableDefaultPathEntry: { _ in .missing }
             ),
@@ -1690,7 +1690,7 @@ final class SocketControlSettingsTests: XCTestCase {
 
     func testStableReleaseFallsBackToUserScopedSocketWhenStablePathOwnedByDifferentUser() {
         let path = SocketControlSettings.defaultSocketPath(
-            bundleIdentifier: "com.cmuxterm.app",
+            bundleIdentifier: "com.execufunction.executerm",
             isDebugBuild: false,
             currentUserID: 501,
             probeStableDefaultPathEntry: { _ in .socket(ownerUserID: 0) }
@@ -1701,7 +1701,7 @@ final class SocketControlSettingsTests: XCTestCase {
 
     func testStableReleaseFallsBackToUserScopedSocketWhenStablePathIsBlockedByNonSocketEntry() {
         let path = SocketControlSettings.defaultSocketPath(
-            bundleIdentifier: "com.cmuxterm.app",
+            bundleIdentifier: "com.execufunction.executerm",
             isDebugBuild: false,
             currentUserID: 501,
             probeStableDefaultPathEntry: { _ in .other(ownerUserID: 501) }

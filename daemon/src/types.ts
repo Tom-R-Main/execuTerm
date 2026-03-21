@@ -1,6 +1,10 @@
 // Workspace templates
 export type WorkspaceKind = 'agent' | 'dev_server' | 'dashboard' | 'shell';
 export type AgentType = 'claude-code' | 'codex' | 'gemini';
+export type AgentLaunchMode =
+  | 'command_only'
+  | 'prompt_argument'
+  | 'interactive_message';
 export type SessionState =
   | 'starting'
   | 'running'
@@ -8,6 +12,10 @@ export type SessionState =
   | 'review_ready'
   | 'failed'
   | 'stopped';
+export type ResumeCapability = 'claude' | 'codex' | 'none';
+export type CheckpointStatus = 'idle' | 'pending' | 'saved' | 'failed';
+export type ContextSourceType = 'note' | 'memory' | 'task' | 'file';
+export type DashboardRefreshMode = 'timed' | 'manual';
 
 // Maps local agent type to ExecuFunction task executorAgent enum
 export type TaskExecutorAgent = 'claude_code' | 'codex' | 'gemini';
@@ -88,17 +96,67 @@ export interface LocalWorkspace {
   surfaceId?: string;
   state: SessionState;
   lastActivity: string; // ISO timestamp
+  resumeId?: string;
+  resumeCommand?: string;
+  resumeCapability?: ResumeCapability;
+  checkpointStatus?: CheckpointStatus;
+  checkpointedAt?: string;
+  attachedContextItems?: AttachedContextItem[];
+}
+
+export interface AttachedContextItem {
+  id: string;
+  sourceType: ContextSourceType;
+  title: string;
+  excerpt: string;
+  filePath?: string;
+  projectId?: string;
+  attachedAt: string;
+  pinned: boolean;
+  estimatedChars: number;
+}
+
+export interface SavedResumableSession {
+  id: string;
+  workspaceId: string;
+  title: string;
+  cwd: string;
+  agentType: AgentType;
+  taskId?: string;
+  projectId?: string;
+  resumeId: string;
+  resumeCommand: string;
+  resumeCapability: Exclude<ResumeCapability, 'none'>;
+  checkpointStatus: 'saved';
+  checkpointedAt: string;
+  attachedContextItems?: AttachedContextItem[];
+}
+
+export interface NotificationPreferences {
+  onNeedsInput: boolean;
+  onFinished: boolean;
+  onFailed: boolean;
 }
 
 export interface DaemonConfig {
   apiUrl: string; // default: https://execufunction.com
   pollIntervalMs: number; // default: 10000
+  dashboardRefreshMode: DashboardRefreshMode; // default: timed
+  dashboardRefreshIntervalMs: number; // default: 10000
   defaultProjectId?: string;
   dashboardPort?: number; // default: auto-assign
+  projectDirectories?: Record<string, string>;
+  recentDirectories?: string[];
+  lastLaunchDirectory?: string;
+  projectAgentPreferences?: Partial<Record<string, AgentType>>;
+  lastAgentType?: AgentType;
+  launchFailureTimeoutMs?: number;
+  notifications?: NotificationPreferences;
 }
 
 export interface DaemonState {
   workspaces: Record<string, LocalWorkspace>;
+  savedSessions: Record<string, SavedResumableSession>;
   hookServerPort: number;
   lastSync: string;
 }
@@ -124,10 +182,13 @@ export interface WorkspaceTemplate {
   kind: WorkspaceKind;
   agentType?: AgentType;
   command: string;
+  managedCommand?: string;
   cwd?: string;
   icon?: string;
   color?: string;
   port?: number; // for dev servers
+  hidden?: boolean;
+  launchMode?: AgentLaunchMode;
 }
 
 export interface AgentSession {
@@ -139,6 +200,9 @@ export interface AgentSession {
   startedAt: string;
   lastStateChange: string;
   error?: string;
+  resumeId?: string;
+  resumeCommand?: string;
+  resumeCapability?: ResumeCapability;
 }
 
 // Real claude-hook-sessions.json format

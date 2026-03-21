@@ -4,16 +4,22 @@ import type { CodeMemory, ProjectContext, TaskContext } from '../promptBuilder.j
 import type { AgentType } from '../types.js';
 import { toTaskExecutorAgent } from '../types.js';
 import type { AgentManager } from './agentManager.js';
+import type { DirectoryManager } from './directoryManager.js';
 import type { WorkspaceManager } from './workspaceManager.js';
 
 export class TaskDispatcher {
   constructor(
     private exfClient: ExfClient,
+    private directoryManager: DirectoryManager,
     private workspaceManager: WorkspaceManager,
     private agentManager: AgentManager
   ) {}
 
-  async dispatch(taskId: string, agentType: AgentType): Promise<string> {
+  async dispatch(
+    taskId: string,
+    agentType: AgentType,
+    opts?: { cwdOverride?: string }
+  ): Promise<string> {
     // 1. Fetch task
     const taskResult = await this.exfClient.getTask(taskId);
     if (!taskResult.data?.task) {
@@ -67,14 +73,20 @@ export class TaskDispatcher {
 
     // 5. Build prompt
     const prompt = buildTaskPrompt(taskContext, projectContext, memories);
+    const projectId = task.projectId as string | undefined;
+    const cwd = this.directoryManager.resolveTaskDirectory(
+      projectId,
+      opts?.cwdOverride
+    );
 
     // 6. Create workspace from template
     const workspaceId = await this.workspaceManager.createFromTemplate(
       agentType,
       {
         taskId,
-        projectId: task.projectId as string | undefined,
+        projectId,
         title: task.title as string,
+        cwd,
         initialPrompt: prompt,
       }
     );
@@ -84,6 +96,8 @@ export class TaskDispatcher {
       executorAgent: toTaskExecutorAgent(agentType),
       phase: 'in_flight',
     });
+
+    this.directoryManager.rememberAgentPreference(agentType, projectId);
 
     // 8. Register agent session
     this.agentManager.register({
