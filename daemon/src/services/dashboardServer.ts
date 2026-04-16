@@ -4,11 +4,13 @@ import type { DirectoryManager } from './directoryManager.js';
 import { DirectoryRequiredError } from './directoryManager.js';
 import type { WorkspaceManager } from './workspaceManager.js';
 import type { TaskDispatcher } from './taskDispatcher.js';
+import type { AugmentLog } from './augmentLog.js';
 import type { ExfClient } from '../exfClient.js';
 import type { ExecuTermSocket } from '../execuTermSocket.js';
 import type {
   AgentType,
   AttachedContextItem,
+  AugmentLogEntry,
   ContextSourceType,
   DashboardRefreshMode,
   DaemonAuthState,
@@ -62,7 +64,8 @@ export class DashboardServer {
     private getExfClient: () => ExfClient | null,
     private getAuthState: () => DaemonAuthState,
     private getTaskDispatcher: () => TaskDispatcher | null,
-    private getCmux?: () => ExecuTermSocket
+    private getCmux?: () => ExecuTermSocket,
+    private augmentLog?: AugmentLog
   ) {}
 
   async start(preferredPort?: number): Promise<number> {
@@ -104,6 +107,16 @@ export class DashboardServer {
     if (url.pathname === '/health' && req.method === 'GET') {
       res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ ok: true, port: this.port }));
+      return;
+    }
+
+    if (url.pathname === '/api/augment/log' && req.method === 'POST') {
+      await this.handleAugmentLog(req, res);
+      return;
+    }
+
+    if (url.pathname === '/api/augment/recent' && req.method === 'GET') {
+      this.serveAugmentRecent(url, res);
       return;
     }
 
@@ -3119,5 +3132,59 @@ export class DashboardServer {
   </script>
 </body>
 </html>`;
+  }
+
+  private async handleAugmentLog(
+    req: http.IncomingMessage,
+    res: http.ServerResponse
+  ): Promise<void> {
+    if (!this.augmentLog) {
+      res.writeHead(204);
+      res.end();
+      return;
+    }
+    try {
+      const raw = await this.readBody(req);
+      const parsed = raw ? JSON.parse(raw) : {};
+      const entry: AugmentLogEntry = {
+        timestamp: new Date().toISOString(),
+        workspaceId: typeof parsed.workspaceId === 'string' && parsed.workspaceId
+          ? parsed.workspaceId
+          : undefined,
+        tool: String(parsed.tool || 'unknown'),
+        query: String(parsed.query || ''),
+        cwd: String(parsed.cwd || ''),
+        realDurationMs: Number.isFinite(+parsed.realDurationMs)
+          ? +parsed.realDurationMs
+          : 0,
+        semanticDurationMs: Number.isFinite(+parsed.semanticDurationMs)
+          ? +parsed.semanticDurationMs
+          : 0,
+        semanticResultCount: Number.isFinite(+parsed.semanticResultCount)
+          ? +parsed.semanticResultCount
+          : 0,
+        semanticStatus: ['ok', 'timeout', 'error', 'skipped'].includes(
+          parsed.semanticStatus
+        )
+          ? parsed.semanticStatus
+          : 'skipped',
+        semanticError: parsed.semanticError
+          ? String(parsed.semanticError).slice(0, 500)
+          : undefined,
+      };
+      this.augmentLog.record(entry);
+      res.writeHead(204);
+      res.end();
+    } catch {
+      res.writeHead(400, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: 'invalid body' }));
+    }
+  }
+
+  private serveAugmentRecent(url: URL, res: http.ServerResponse): void {
+    const limit = Number(url.searchParams.get('limit') || '50');
+    const entries = this.augmentLog ? this.augmentLog.recent(limit) : [];
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ entries }));
   }
 }

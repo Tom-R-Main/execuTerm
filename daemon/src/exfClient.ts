@@ -196,7 +196,11 @@ export class ExfClient {
 
   // Code Memory
 
-  async searchCodeMemories(options: { query: string; limit?: number }) {
+  async searchCodeMemories(options: {
+    query: string;
+    scopePaths?: string[];
+    limit?: number;
+  }) {
     return this.request<{
       memories: Array<{
         id: string;
@@ -204,6 +208,8 @@ export class ExfClient {
         content: string;
         filePath?: string;
         confidence: number;
+        distance?: number;
+        relevanceScore?: number;
       }>;
     }>('POST', '/api/v1/code/memories/search', options);
   }

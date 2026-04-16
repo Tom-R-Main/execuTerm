@@ -28,6 +28,8 @@ import { SidebarUpdater } from './services/sidebarUpdater.js';
 import { TaskDispatcher } from './services/taskDispatcher.js';
 import { DashboardServer } from './services/dashboardServer.js';
 import { DirectoryManager } from './services/directoryManager.js';
+import { AugmentLog } from './services/augmentLog.js';
+import { installShims } from './services/shimInstaller.js';
 import type { AgentType, DaemonState } from './types.js';
 
 function parseArgs(argv: string[]): {
@@ -98,6 +100,25 @@ async function main(): Promise<void> {
   // 4. Initialize core managers
   const workspaceManager = new WorkspaceManager(cmux, state);
   const directoryManager = new DirectoryManager(config);
+  const augmentLog = new AugmentLog();
+
+  // Install tool augmentation shims (idempotent). Safe to run even when
+  // augment.enabled is false — shims only activate when CMUX_AUGMENT=1 is
+  // passed to the child shell, which only happens via workspaceManager when
+  // the config opts in.
+  if (config.augment?.enabled) {
+    try {
+      const result = installShims({ tools: config.augment.tools });
+      console.log(
+        `Shim installer: destDir=${result.destDir} installed=[${result.installed.join(',')}] skipped=[${result.skipped.join(',')}]`
+      );
+    } catch (err) {
+      console.error(
+        'Shim installer failed — tool augmentation disabled for this run:',
+        err instanceof Error ? err.message : err
+      );
+    }
+  }
   let exfClient: ExfClient | null = null;
   let sidebarUpdater: SidebarUpdater | null = null;
   let agentManager: AgentManager | null = null;
@@ -202,7 +223,8 @@ async function main(): Promise<void> {
     () => exfClient,
     () => authCoordinator.getState(),
     () => taskDispatcher,
-    () => cmux
+    () => cmux,
+    augmentLog
   );
   const dashboardPort = await dashboard.start(config.dashboardPort);
   state.hookServerPort = dashboardPort;

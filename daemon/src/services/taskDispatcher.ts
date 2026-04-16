@@ -7,6 +7,21 @@ import type { AgentManager } from './agentManager.js';
 import type { DirectoryManager } from './directoryManager.js';
 import type { WorkspaceManager } from './workspaceManager.js';
 
+const MAX_QUERY_LENGTH = 500;
+
+function buildMemorySearchQuery(task: Record<string, unknown>): string {
+  const parts: string[] = [];
+  if (task.title) parts.push(task.title as string);
+  if (task.rationale) parts.push(task.rationale as string);
+  else if (task.description) parts.push(task.description as string);
+  if (task.deliverable) parts.push(task.deliverable as string);
+  const scope = task.scope as { include?: string[] } | undefined;
+  if (scope?.include?.length) parts.push(scope.include.join(' '));
+  const criteria = task.acceptanceCriteria as Array<{ text: string }> | undefined;
+  if (criteria?.length) parts.push(criteria.map((c) => c.text).join(' '));
+  return parts.join(' ').trim().slice(0, MAX_QUERY_LENGTH);
+}
+
 export class TaskDispatcher {
   constructor(
     private exfClient: ExfClient,
@@ -40,18 +55,18 @@ export class TaskDispatcher {
 
     // 3. Search code memory for relevant decisions
     let memories: CodeMemory[] = [];
-    const searchQuery =
-      (task.title as string) +
-      ' ' +
-      ((task.rationale as string) || (task.description as string) || '');
+    const searchQuery = buildMemorySearchQuery(task);
+    const scopeInclude = (task.scope as { include?: string[] } | undefined)?.include;
     const memResult = await this.exfClient.searchCodeMemories({
-      query: searchQuery.trim(),
-      limit: 5,
+      query: searchQuery,
+      scopePaths: scopeInclude,
+      limit: 10,
     });
     if (memResult.data?.memories) {
       memories = memResult.data.memories.map((m) => ({
         fact: m.content,
         category: m.factType,
+        filePath: m.filePath,
       }));
     }
 

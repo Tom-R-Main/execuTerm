@@ -10,7 +10,8 @@ import type {
   SavedResumableSession,
   WorkspaceTemplate,
 } from '../types.js';
-import { writeDaemonState } from '../config.js';
+import { readDaemonConfig, writeDaemonState } from '../config.js';
+import { getShimInstallDir } from './shimInstaller.js';
 
 const TEMPLATES: WorkspaceTemplate[] = [
   {
@@ -73,11 +74,60 @@ const TEMPLATES: WorkspaceTemplate[] = [
   },
 ];
 
+function shSingleQuote(value: string): string {
+  return `'${String(value).replace(/'/g, `'\\''`)}'`;
+}
+
+function buildAugmentPreamble(
+  env: Record<string, string | undefined>
+): string {
+  const parts: string[] = [];
+  for (const [key, rawValue] of Object.entries(env)) {
+    if (rawValue === undefined || rawValue === null || rawValue === '') continue;
+    if (!/^[A-Z_][A-Z0-9_]*$/.test(key)) continue;
+    parts.push(`export ${key}=${shSingleQuote(String(rawValue))}`);
+  }
+  return parts.length > 0 ? parts.join('; ') + '; ' : '';
+}
+
 export class WorkspaceManager {
   constructor(
     private cmux: ExecuTermSocket,
     private state: DaemonState
   ) {}
+
+  private resolveAugmentEnvFor(
+    template: WorkspaceTemplate,
+    workspaceId: string
+  ): Record<string, string | undefined> | null {
+    if (template.kind !== 'agent') return null;
+    let config;
+    try {
+      config = readDaemonConfig();
+    } catch {
+      return null;
+    }
+    const augment = config.augment;
+    if (!augment || !augment.enabled) return null;
+    if (!augment.tools || augment.tools.length === 0) return null;
+
+    const shimDir = getShimInstallDir();
+    const port = this.state.hookServerPort;
+    const logUrl = port ? `http://127.0.0.1:${port}/api/augment/log` : undefined;
+
+    return {
+      CMUX_AUGMENT: '1',
+      CMUX_AUGMENT_BIN: shimDir,
+      CMUX_AUGMENT_EXF_BIN: process.env.CMUX_AUGMENT_EXF_BIN || 'exf',
+      CMUX_AUGMENT_TIMEOUT_MS: String(augment.semanticTimeoutMs),
+      CMUX_AUGMENT_MAX_RESULTS: String(augment.maxSemanticResults),
+      CMUX_AUGMENT_MIN_QUERY_LEN: String(augment.minQueryLength),
+      CMUX_AUGMENT_REPO_ID: augment.repositoryId,
+      CMUX_AUGMENT_LOG_URL: logUrl,
+      CMUX_WORKSPACE_ID: workspaceId,
+      PATH: `${shimDir}:${process.env.PATH || '/usr/local/bin:/usr/bin:/bin'}`,
+    };
+  }
 
   getTemplate(templateId: string): WorkspaceTemplate | undefined {
     return TEMPLATES.find((t) => t.id === templateId);
@@ -182,7 +232,9 @@ export class WorkspaceManager {
     }
 
     if (startupCommand && surfaceId) {
-      await this.cmux.surfaceSendText(startupCommand + '\n', surfaceId);
+      const augmentEnv = this.resolveAugmentEnvFor(template, workspaceId);
+      const preamble = augmentEnv ? buildAugmentPreamble(augmentEnv) : '';
+      await this.cmux.surfaceSendText(preamble + startupCommand + '\n', surfaceId);
     }
 
     if (deferredPrompt && surfaceId) {

@@ -1,0 +1,153 @@
+#!/usr/bin/env bash
+# cmux-augment grep shim. When CMUX_AUGMENT=1 and the invocation is a
+# standard content search, runs real grep AND `exf codebase search` in
+# parallel, appends semantic results as a trailing section on stdout.
+# On any failure in the semantic path, falls through to real grep unchanged.
+
+_SHIM_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd -P)"
+# shellcheck source=./_augment-common.sh
+. "$_SHIM_DIR/_augment-common.sh"
+
+REAL="$(_cmux_augment_real_path grep || true)"
+if [ -z "$REAL" ]; then
+  # Nothing we can do without a real grep. Let the shell surface the error.
+  echo "cmux augment: no real grep found in PATH (minus shim dir)" >&2
+  exit 127
+fi
+
+QUERY="$(_cmux_augment_extract_query "$@")"
+
+# Format-sensitive flags the model likely expects to parse exactly.
+# If any are present, just exec the real binary and skip augmentation.
+for a in "$@"; do
+  case "$a" in
+    --help|-V|--version|-c|--count|-l|--files-with-matches|-L|--files-without-match|-o|--only-matching|-Z|--null|--null-data|-q|--quiet|--silent)
+      exec "$REAL" "$@"
+      ;;
+  esac
+done
+
+if ! _cmux_augment_should_run "$QUERY"; then
+  exec "$REAL" "$@"
+fi
+
+TOOL_NAME="grep"
+TMPDIR_BASE="${TMPDIR:-/tmp}"
+SESSION_DIR="$(mktemp -d "$TMPDIR_BASE/cmux-augment.XXXXXX")" || exec "$REAL" "$@"
+trap 'rm -rf "$SESSION_DIR"' EXIT
+
+REAL_STDOUT="$SESSION_DIR/real.stdout"
+REAL_STDERR="$SESSION_DIR/real.stderr"
+SEM_STDOUT="$SESSION_DIR/sem.stdout"
+SEM_STDERR="$SESSION_DIR/sem.stderr"
+STDIN_CACHE="$SESSION_DIR/stdin"
+
+# Count positional non-flag args to decide whether stdin will be read.
+# grep reads stdin only when there are no file arguments (pattern alone, or
+# pattern + "-"). Buffering stdin when we don't need to would hang on an
+# empty inherited pipe.
+_pos_count=0
+_saw_dashdash=0
+for _a in "$@"; do
+  if [ "$_saw_dashdash" = "1" ]; then _pos_count=$((_pos_count+1)); continue; fi
+  case "$_a" in
+    --) _saw_dashdash=1 ;;
+    -*) ;;
+    *) _pos_count=$((_pos_count+1)) ;;
+  esac
+done
+if [ "$_pos_count" -le 1 ] && [ ! -t 0 ]; then
+  # Stdin-driven grep: buffer so backgrounded real grep can re-read.
+  cat > "$STDIN_CACHE"
+  REAL_STDIN_REDIRECT="$STDIN_CACHE"
+else
+  REAL_STDIN_REDIRECT=/dev/null
+fi
+
+# Run real + semantic in parallel.
+REAL_T0=$(_cmux_augment_now_ms)
+"$REAL" "$@" < "$REAL_STDIN_REDIRECT" >"$REAL_STDOUT" 2>"$REAL_STDERR" &
+REAL_PID=$!
+
+SEM_T0=$(_cmux_augment_now_ms)
+(
+  exf_bin="${CMUX_AUGMENT_EXF_BIN:-exf}"
+  timeout_ms="${CMUX_AUGMENT_TIMEOUT_MS:-1500}"
+  max_results="${CMUX_AUGMENT_MAX_RESULTS:-8}"
+  repo_arg=()
+  if [ -n "${CMUX_AUGMENT_REPO_ID:-}" ]; then
+    repo_arg=(--repo "$CMUX_AUGMENT_REPO_ID")
+  fi
+  # Convert ms → seconds for coreutils timeout (accepts decimals via GNU; BSD
+  # `timeout` from coreutils installed via brew handles fractional seconds too).
+  secs="$(awk "BEGIN{printf \"%.3f\", $timeout_ms/1000}")"
+  if command -v timeout >/dev/null 2>&1; then
+    timeout "$secs" \
+      "$exf_bin" codebase search "$QUERY" --json --no-input --limit "$max_results" \
+      ${repo_arg[@]+"${repo_arg[@]}"} \
+      2>"$SEM_STDERR" >"$SEM_STDOUT" || true
+  else
+    "$exf_bin" codebase search "$QUERY" --json --no-input --limit "$max_results" \
+      ${repo_arg[@]+"${repo_arg[@]}"} \
+      2>"$SEM_STDERR" >"$SEM_STDOUT" || true
+  fi
+) &
+SEM_PID=$!
+
+wait "$REAL_PID"
+REAL_EXIT=$?
+REAL_T1=$(_cmux_augment_now_ms)
+
+wait "$SEM_PID" 2>/dev/null || true
+SEM_T1=$(_cmux_augment_now_ms)
+
+# Always emit real stdout/stderr first, unchanged.
+cat "$REAL_STDOUT"
+cat "$REAL_STDERR" >&2
+
+# Append semantic section only on best-effort success.
+SEM_COUNT=0
+SEM_STATUS="skipped"
+SEM_ERROR=""
+if [ -s "$SEM_STDOUT" ]; then
+  # Prefer jq for safe extraction; fall back to crude parsing if absent.
+  if command -v jq >/dev/null 2>&1; then
+    SEM_COUNT=$(jq -r '(if type=="array" then . else (.results // .items // []) end) | length' "$SEM_STDOUT" 2>/dev/null || echo 0)
+    if [ "${SEM_COUNT:-0}" -gt 0 ]; then
+      SEM_STATUS="ok"
+      printf '\n# cmux augment: semantic matches for %q (top %s, via exf codebase search)\n' \
+        "$QUERY" "$SEM_COUNT"
+      jq -r '
+        (if type=="array" then . else (.results // .items // []) end)
+        | .[]
+        | "\(.filePath // .path // "?"):\(.startLine // .line // 1):[\(.repositoryName // "?")] \(.body // .snippet // .preview // .text // "" | gsub("\n";" ") | .[0:240])"
+      ' "$SEM_STDOUT" 2>/dev/null || true
+    else
+      SEM_STATUS="ok"
+    fi
+  else
+    # No jq → don't risk malformed output, just mark ok and skip the section.
+    SEM_STATUS="ok"
+  fi
+else
+  if [ -s "$SEM_STDERR" ]; then
+    SEM_STATUS="error"
+    SEM_ERROR="$(head -c 200 "$SEM_STDERR" 2>/dev/null || true)"
+  else
+    SEM_STATUS="timeout"
+  fi
+fi
+
+# Log asynchronously. Math is ms; if date +%s%3N failed (macOS without coreutils
+# gdate), both T0 and T1 are 0 → duration 0. Harmless.
+REAL_MS=$(( REAL_T1 - REAL_T0 )); [ "$REAL_MS" -lt 0 ] && REAL_MS=0
+SEM_MS=$(( SEM_T1 - SEM_T0 )); [ "$SEM_MS" -lt 0 ] && SEM_MS=0
+
+Q_ESC="$(_cmux_augment_json_escape "$QUERY")"
+E_ESC="$(_cmux_augment_json_escape "$SEM_ERROR")"
+CWD_ESC="$(_cmux_augment_json_escape "${PWD:-}")"
+WS_ESC="$(_cmux_augment_json_escape "${CMUX_WORKSPACE_ID:-}")"
+_cmux_augment_log "$(printf '{"tool":"%s","query":"%s","cwd":"%s","workspaceId":"%s","realDurationMs":%s,"semanticDurationMs":%s,"semanticResultCount":%s,"semanticStatus":"%s","semanticError":"%s"}' \
+  "$TOOL_NAME" "$Q_ESC" "$CWD_ESC" "$WS_ESC" "$REAL_MS" "$SEM_MS" "${SEM_COUNT:-0}" "$SEM_STATUS" "$E_ESC")"
+
+exit "$REAL_EXIT"

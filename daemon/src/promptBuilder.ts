@@ -19,6 +19,7 @@ export interface ProjectContext {
 export interface CodeMemory {
   fact: string;
   category: string;
+  filePath?: string;
 }
 
 export function buildTaskPrompt(
@@ -115,7 +116,11 @@ export function buildTaskPrompt(
   // Code memories
   if (memories && memories.length > 0) {
     const memoryItems = memories
-      .map((m) => `- **[${m.category}]** ${m.fact}`)
+      .map((m) => {
+        const category = m.category.replace(/^code\./, '');
+        const pathHint = m.filePath ? ` *(${m.filePath})*` : '';
+        return `- **[${category}]**${pathHint} ${m.fact}`;
+      })
       .join('\n');
     sections.push(`## Relevant Code Knowledge\n${memoryItems}`);
   }

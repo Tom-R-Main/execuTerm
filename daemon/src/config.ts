@@ -9,6 +9,7 @@ import type {
   DaemonState,
   LocalWorkspace,
   SavedResumableSession,
+  ToolAugmentConfig,
 } from './types.js';
 
 export const DEFAULT_NOTIFICATION_PREFS = {
@@ -16,6 +17,58 @@ export const DEFAULT_NOTIFICATION_PREFS = {
   onFinished: true,
   onFailed: true,
 };
+
+export const DEFAULT_AUGMENT_CONFIG: ToolAugmentConfig = {
+  enabled: false,
+  tools: ['grep', 'rg'],
+  semanticTimeoutMs: 1500,
+  maxSemanticResults: 8,
+  minQueryLength: 3,
+};
+
+const VALID_AUGMENT_TOOLS = new Set(['grep', 'rg']);
+
+function normalizeAugmentConfig(
+  input: Partial<ToolAugmentConfig> | undefined
+): ToolAugmentConfig {
+  const merged = { ...DEFAULT_AUGMENT_CONFIG, ...(input || {}) };
+  const tools = Array.isArray(merged.tools)
+    ? Array.from(
+        new Set(
+          merged.tools
+            .map((t) => String(t).toLowerCase())
+            .filter((t) => VALID_AUGMENT_TOOLS.has(t))
+        )
+      )
+    : DEFAULT_AUGMENT_CONFIG.tools;
+  const clamp = (n: unknown, lo: number, hi: number, fallback: number) => {
+    const v = typeof n === 'number' && Number.isFinite(n) ? n : fallback;
+    return Math.max(lo, Math.min(hi, v));
+  };
+  return {
+    enabled: !!merged.enabled,
+    tools: tools.length > 0 ? tools : DEFAULT_AUGMENT_CONFIG.tools,
+    semanticTimeoutMs: clamp(
+      merged.semanticTimeoutMs,
+      100,
+      10000,
+      DEFAULT_AUGMENT_CONFIG.semanticTimeoutMs
+    ),
+    maxSemanticResults: clamp(
+      merged.maxSemanticResults,
+      1,
+      50,
+      DEFAULT_AUGMENT_CONFIG.maxSemanticResults
+    ),
+    minQueryLength: clamp(
+      merged.minQueryLength,
+      1,
+      20,
+      DEFAULT_AUGMENT_CONFIG.minQueryLength
+    ),
+    repositoryId: merged.repositoryId ? String(merged.repositoryId) : undefined,
+  };
+}
 
 export const DEFAULT_DASHBOARD_REFRESH_MODE: DashboardRefreshMode = 'timed';
 export const DEFAULT_DASHBOARD_REFRESH_INTERVAL_MS = 10000;
@@ -32,6 +85,7 @@ const DEFAULT_CONFIG: DaemonConfig = {
   lastAgentType: 'codex',
   launchFailureTimeoutMs: 20000,
   notifications: { ...DEFAULT_NOTIFICATION_PREFS },
+  augment: { ...DEFAULT_AUGMENT_CONFIG },
 };
 
 export function getConfigDir(): string {
@@ -118,6 +172,7 @@ export function normalizeDaemonConfig(config: Partial<DaemonConfig>): DaemonConf
     ...merged,
     dashboardRefreshMode: refreshMode,
     dashboardRefreshIntervalMs: refreshInterval,
+    augment: normalizeAugmentConfig(merged.augment),
   };
 }
 

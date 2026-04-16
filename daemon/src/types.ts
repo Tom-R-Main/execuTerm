@@ -138,6 +138,28 @@ export interface NotificationPreferences {
   onFailed: boolean;
 }
 
+export interface ToolAugmentConfig {
+  enabled: boolean;
+  tools: string[];
+  semanticTimeoutMs: number;
+  maxSemanticResults: number;
+  minQueryLength: number;
+  repositoryId?: string;
+}
+
+export interface AugmentLogEntry {
+  timestamp: string;
+  workspaceId?: string;
+  tool: string;
+  query: string;
+  cwd: string;
+  realDurationMs: number;
+  semanticDurationMs: number;
+  semanticResultCount: number;
+  semanticStatus: 'ok' | 'timeout' | 'error' | 'skipped';
+  semanticError?: string;
+}
+
 export interface DaemonConfig {
   apiUrl: string; // default: https://execufunction.com
   pollIntervalMs: number; // default: 10000
@@ -152,6 +174,7 @@ export interface DaemonConfig {
   lastAgentType?: AgentType;
   launchFailureTimeoutMs?: number;
   notifications?: NotificationPreferences;
+  augment?: ToolAugmentConfig;
 }
 
 export interface DaemonState {
