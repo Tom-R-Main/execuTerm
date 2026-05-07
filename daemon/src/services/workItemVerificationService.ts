@@ -49,7 +49,7 @@ export function redactVerificationOutput(value: string): string {
   return value
     .replace(/claim-[A-Za-z0-9-]+/g, '[REDACTED_CLAIM]')
     .replace(/(Bearer\s+)[A-Za-z0-9._~+/=-]+/gi, '$1[REDACTED]')
-    .replace(/\b(?:pat|ghp|github_pat|sk|rk|sess|tok)_[A-Za-z0-9_=-]{12,}\b/g, '[REDACTED_TOKEN]')
+    .replace(/\b(?:exf_pat|pat|ghp|github_pat|sk|rk|sess|tok)_[A-Za-z0-9_=-]{12,}\b/g, '[REDACTED_TOKEN]')
     .replace(/([A-Z0-9_]*(?:TOKEN|SECRET|API_KEY|PAT)[A-Z0-9_]*=)[^\s]+/gi, '$1[REDACTED]');
 }
 

@@ -68,8 +68,12 @@ describe('WorkItemVerificationService', () => {
 
   it('redacts claim tokens and bearer credentials from command output', () => {
     expect(
-      redactVerificationOutput('Bearer abc.def.ghi claim-1234-secret API_KEY=super-secret')
-    ).toBe('Bearer [REDACTED] [REDACTED_CLAIM] API_KEY=[REDACTED]');
+      redactVerificationOutput(
+        'Bearer abc.def.ghi exf_pat_fake_secret_123456789012 claim-1234-secret OPENAI_API_KEY=sk-testfake123456789012'
+      )
+    ).toBe(
+      'Bearer [REDACTED] [REDACTED_TOKEN] [REDACTED_CLAIM] OPENAI_API_KEY=[REDACTED]'
+    );
   });
 
   it('uses configured commands before execuTerm defaults', () => {
