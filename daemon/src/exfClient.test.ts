@@ -75,4 +75,40 @@ describe('ExfClient work-item methods', () => {
       expect.objectContaining({ method: 'GET' })
     );
   });
+
+  it('appends durable work-item artifacts without changing status', async () => {
+    const fetchMock: jest.Mock<Promise<any>, any[]> = jest.fn(async () => ({
+      status: 200,
+      json: async () => ({ workItem: { id: 'work-1', status: 'needs_review' } }),
+    }));
+    global.fetch = fetchMock as any;
+    const client = new ExfClient({
+      apiUrl: 'https://api.example.test',
+      pat: 'pat-test',
+    });
+
+    await client.appendWorkItemArtifacts('work-1', [
+      {
+        type: 'verification_result',
+        source: 'executerm',
+        aggregateStatus: 'passed',
+      },
+    ]);
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      'https://api.example.test/api/v1/work-items/work-1/artifacts',
+      expect.objectContaining({
+        method: 'POST',
+        body: JSON.stringify({
+          artifactRefs: [
+            {
+              type: 'verification_result',
+              source: 'executerm',
+              aggregateStatus: 'passed',
+            },
+          ],
+        }),
+      })
+    );
+  });
 });

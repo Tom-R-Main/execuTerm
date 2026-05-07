@@ -52,6 +52,7 @@ export interface AgentWorkItem {
   claimOwner?: string | null;
   claimToken?: string | null;
   claimExpiresAt?: string | null;
+  verificationCommands?: string[];
   artifactRefs?: unknown[];
   updatedAt?: string;
 }

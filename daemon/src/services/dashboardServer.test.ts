@@ -194,7 +194,9 @@ describe('DashboardServer agent stop API', () => {
 
   it.each([
     ['approve', 'completeWorkItem'],
+    ['approve-anyway', 'completeWorkItem'],
     ['changes', 'releaseWorkItem'],
+    ['changes-with-output', 'releaseWorkItem'],
     ['dismiss', 'cancelWorkItem'],
   ])('routes %s work-item review actions through ExfClient', async (action, methodName) => {
     const exfClient = {
@@ -231,6 +233,62 @@ describe('DashboardServer agent stop API', () => {
       'work-1',
       expect.any(Object)
     );
+  });
+
+  it('runs work-item verification and appends the result artifact', async () => {
+    const sandboxDir = mkdtempSync(join(tmpdir(), 'executerm-dashboard-checks-'));
+    try {
+      const exfClient = {
+        getWorkItem: jest.fn(async () => ({
+          data: {
+            workItem: {
+              id: 'work-1',
+              title: 'Review work',
+              status: 'needs_review',
+              verificationCommands: ['node -e "console.log(123)"'],
+              artifactRefs: [{ type: 'worktree', path: sandboxDir }],
+            },
+          },
+        })),
+        appendWorkItemArtifacts: jest.fn(async () => ({
+          statusCode: 200,
+          data: { workItem: { id: 'work-1' } },
+        })),
+      };
+      const workspaceManager = {} as any;
+      const server = new DashboardServer(
+        () => null,
+        directoryManager as any,
+        workspaceManager,
+        () => exfClient as any,
+        () => authState,
+        () => null,
+        () => mockCmux as any
+      );
+      const response = makeResponse();
+
+      await (server as any).handleRequest(
+        makeDashboardRequest(
+          server,
+          {},
+          '/api/work-items/work-1/run-checks'
+        ),
+        response
+      );
+
+      expect(response.statusCode).toBe(200);
+      expect(exfClient.appendWorkItemArtifacts).toHaveBeenCalledWith(
+        'work-1',
+        [
+          expect.objectContaining({
+            type: 'verification_result',
+            aggregateStatus: 'passed',
+          }),
+        ]
+      );
+    } finally {
+      rmSync(sandboxDir, { recursive: true, force: true });
+    }
   });
 
   it('rejects dashboard POST mutations without the dashboard token', async () => {
