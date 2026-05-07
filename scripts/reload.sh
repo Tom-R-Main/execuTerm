@@ -102,6 +102,21 @@ write_last_socket_path() {
   echo "$socket_path" > /tmp/cmux-last-socket-path || true
 }
 
+sync_ghosttykit_headers() {
+  local bridge_header="$PWD/ghostty.h"
+  local framework_dir="$PWD/GhosttyKit.xcframework"
+  local header=""
+
+  [[ -f "$bridge_header" && -d "$framework_dir" ]] || return 0
+
+  while IFS= read -r header; do
+    [[ -f "$header" ]] || continue
+    if ! cmp -s "$bridge_header" "$header"; then
+      cp "$bridge_header" "$header"
+    fi
+  done < <(find "$framework_dir" -path '*/Headers/ghostty.h' -type f)
+}
+
 usage() {
   cat <<'EOF'
 Usage: ./scripts/reload.sh --tag <name> [options]
@@ -294,6 +309,8 @@ if [[ -z "$TAG" ]]; then
   )
 fi
 XCODEBUILD_ARGS+=(build)
+
+sync_ghosttykit_headers
 
 XCODE_LOG="/tmp/executerm-xcodebuild-${TAG_SLUG}.log"
 xcodebuild "${XCODEBUILD_ARGS[@]}" 2>&1 | tee "$XCODE_LOG" | grep -E '(warning:|error:|fatal:|BUILD FAILED|BUILD SUCCEEDED|\*\* BUILD)' || true

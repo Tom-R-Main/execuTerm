@@ -1,5 +1,6 @@
 import XCTest
 import AppKit
+import ObjectiveC.runtime
 
 #if canImport(cmux_DEV)
 @testable import cmux_DEV
@@ -7,6 +8,139 @@ import AppKit
 @testable import cmux
 #endif
 
+private var cjkIMEInterpretKeyEventsSwizzled = false
+var cjkIMEInterpretKeyEventsHook: ((GhosttyNSView, [NSEvent]) -> Bool)?
+private var ghosttyPasteActionSwizzled = false
+private var ghosttyPasteActionHook: ((GhosttyNSView, Any?) -> Void)?
+private var ghosttyPasteAsPlainTextActionSwizzled = false
+private var ghosttyPasteAsPlainTextActionHook: ((GhosttyNSView, Any?) -> Void)?
+
+private extension GhosttyNSView {
+    @objc func cmuxUnitTest_interpretKeyEvents(_ eventArray: [NSEvent]) {
+        if let hook = cjkIMEInterpretKeyEventsHook, hook(self, eventArray) {
+            return
+        }
+        cmuxUnitTest_interpretKeyEvents(eventArray)
+    }
+
+    @objc func cmuxUnitTest_paste(_ sender: Any?) {
+        ghosttyPasteActionHook?(self, sender)
+        cmuxUnitTest_paste(sender)
+    }
+
+    @objc func cmuxUnitTest_pasteAsPlainText(_ sender: Any?) {
+        ghosttyPasteAsPlainTextActionHook?(self, sender)
+        cmuxUnitTest_pasteAsPlainText(sender)
+    }
+}
+
+func installCJKIMEInterpretKeyEventsSwizzle() {
+    guard !cjkIMEInterpretKeyEventsSwizzled else { return }
+
+    let originalSelector = #selector(GhosttyNSView.interpretKeyEvents(_:))
+    let swizzledSelector = #selector(GhosttyNSView.cmuxUnitTest_interpretKeyEvents(_:))
+
+    guard let originalMethod = class_getInstanceMethod(GhosttyNSView.self, originalSelector),
+          let swizzledMethod = class_getInstanceMethod(GhosttyNSView.self, swizzledSelector) else {
+        fatalError("Unable to locate GhosttyNSView interpretKeyEvents methods for swizzling")
+    }
+
+    let didAddMethod = class_addMethod(
+        GhosttyNSView.self,
+        originalSelector,
+        method_getImplementation(swizzledMethod),
+        method_getTypeEncoding(swizzledMethod)
+    )
+
+    if didAddMethod {
+        class_replaceMethod(
+            GhosttyNSView.self,
+            swizzledSelector,
+            method_getImplementation(originalMethod),
+            method_getTypeEncoding(originalMethod)
+        )
+    } else {
+        method_exchangeImplementations(originalMethod, swizzledMethod)
+    }
+
+    cjkIMEInterpretKeyEventsSwizzled = true
+}
+
+private func installGhosttyPasteActionSwizzle() {
+    guard !ghosttyPasteActionSwizzled else { return }
+
+    let originalSelector = #selector(GhosttyNSView.paste(_:))
+    let swizzledSelector = #selector(GhosttyNSView.cmuxUnitTest_paste(_:))
+
+    guard let originalMethod = class_getInstanceMethod(GhosttyNSView.self, originalSelector),
+          let swizzledMethod = class_getInstanceMethod(GhosttyNSView.self, swizzledSelector) else {
+        fatalError("Unable to locate GhosttyNSView paste methods for swizzling")
+    }
+
+    let didAddMethod = class_addMethod(
+        GhosttyNSView.self,
+        originalSelector,
+        method_getImplementation(swizzledMethod),
+        method_getTypeEncoding(swizzledMethod)
+    )
+
+    if didAddMethod {
+        class_replaceMethod(
+            GhosttyNSView.self,
+            swizzledSelector,
+            method_getImplementation(originalMethod),
+            method_getTypeEncoding(originalMethod)
+        )
+    } else {
+        method_exchangeImplementations(originalMethod, swizzledMethod)
+    }
+
+    ghosttyPasteActionSwizzled = true
+
+    guard !ghosttyPasteAsPlainTextActionSwizzled else { return }
+
+    let plainTextOriginalSelector = #selector(GhosttyNSView.pasteAsPlainText(_:))
+    let plainTextSwizzledSelector = #selector(GhosttyNSView.cmuxUnitTest_pasteAsPlainText(_:))
+
+    guard let plainTextOriginalMethod = class_getInstanceMethod(GhosttyNSView.self, plainTextOriginalSelector),
+          let plainTextSwizzledMethod = class_getInstanceMethod(GhosttyNSView.self, plainTextSwizzledSelector) else {
+        fatalError("Unable to locate GhosttyNSView pasteAsPlainText methods for swizzling")
+    }
+
+    let didAddPlainTextMethod = class_addMethod(
+        GhosttyNSView.self,
+        plainTextOriginalSelector,
+        method_getImplementation(plainTextSwizzledMethod),
+        method_getTypeEncoding(plainTextSwizzledMethod)
+    )
+
+    if didAddPlainTextMethod {
+        class_replaceMethod(
+            GhosttyNSView.self,
+            plainTextSwizzledSelector,
+            method_getImplementation(plainTextOriginalMethod),
+            method_getTypeEncoding(plainTextOriginalMethod)
+        )
+    } else {
+        method_exchangeImplementations(plainTextOriginalMethod, plainTextSwizzledMethod)
+    }
+
+    ghosttyPasteAsPlainTextActionSwizzled = true
+}
+
+func findGhosttyNSView(in view: NSView) -> GhosttyNSView? {
+    if let view = view as? GhosttyNSView {
+        return view
+    }
+
+    for subview in view.subviews {
+        if let match = findGhosttyNSView(in: subview) {
+            return match
+        }
+    }
+
+    return nil
+}
 // MARK: - NSTextInputClient protocol: marked text (preedit) lifecycle
 
 /// Tests that the GhosttyNSView NSTextInputClient implementation correctly
@@ -230,13 +364,7 @@ final class CJKIMEMarkedTextTests: XCTestCase {
         XCTAssertFalse(view.hasMarkedText())
     }
 
-    // MARK: - selectedRange / validAttributesForMarkedText
-
-    func testSelectedRangeReturnsEmptyRangeWithoutSelection() {
-        let view = GhosttyNSView(frame: .zero)
-        let range = view.selectedRange()
-        XCTAssertEqual(range, NSRange(location: 0, length: 0))
-    }
+    // MARK: - validAttributesForMarkedText
 
     func testValidAttributesForMarkedTextReturnsEmpty() {
         let view = GhosttyNSView(frame: .zero)
@@ -811,6 +939,49 @@ final class CJKIMEKeyTextAccumulatorTests: XCTestCase {
     }
 }
 
+// MARK: - External committed-text sanitization
+
+final class ExternalCommittedTextSanitizationTests: XCTestCase {
+    func testStripsLeadingCSISequenceFromExternalCommittedText() {
+        XCTAssertEqual(
+            GhosttyNSView.sanitizeExternalCommittedText("\u{1B}[Chello"),
+            "hello"
+        )
+    }
+
+    func testStripsLeadingC1CSISequenceFromExternalCommittedText() {
+        XCTAssertEqual(
+            GhosttyNSView.sanitizeExternalCommittedText("\u{009B}1;5Chello"),
+            "hello"
+        )
+    }
+
+    func testStripsMultipleLeadingControlAndEscapeSequences() {
+        XCTAssertEqual(
+            GhosttyNSView.sanitizeExternalCommittedText("\u{1B}[1;5C\u{1B}OChello"),
+            "hello"
+        )
+    }
+
+    func testLeavesLiteralBracketPrefixedTextUntouched() {
+        XCTAssertEqual(
+            GhosttyNSView.sanitizeExternalCommittedText("[Code] review"),
+            "[Code] review"
+        )
+    }
+
+    func testPreservesLeadingControlBytesUsedByAutomation() {
+        XCTAssertEqual(
+            GhosttyNSView.sanitizeExternalCommittedText("\n"),
+            "\n"
+        )
+        XCTAssertEqual(
+            GhosttyNSView.sanitizeExternalCommittedText("\tfoo"),
+            "\tfoo"
+        )
+    }
+}
+
 // MARK: - Shift+Space fallback suppression (IME source-switch shortcut)
 
 final class CJKIMEShiftSpaceFallbackTests: XCTestCase {
@@ -932,6 +1103,379 @@ final class GhosttySpaceReleaseRegressionTests: XCTestCase {
     }
 }
 
+@MainActor
+final class KoreanIMEReturnCommitRegressionTests: XCTestCase {
+    func testReturnAfterKoreanCommitAlsoSendsReturnToSurface() {
+        _ = NSApplication.shared
+
+        let surface = TerminalSurface(
+            tabId: UUID(),
+            context: GHOSTTY_SURFACE_CONTEXT_SPLIT,
+            configTemplate: nil,
+            workingDirectory: nil
+        )
+        let hostedView = surface.hostedView
+
+        let window = NSWindow(
+            contentRect: NSRect(x: 0, y: 0, width: 360, height: 240),
+            styleMask: [.titled, .closable],
+            backing: .buffered,
+            defer: false
+        )
+        defer {
+            GhosttyNSView.debugGhosttySurfaceKeyEventObserver = nil
+            window.orderOut(nil)
+        }
+
+        guard let contentView = window.contentView else {
+            XCTFail("Expected content view")
+            return
+        }
+
+        hostedView.frame = contentView.bounds
+        hostedView.autoresizingMask = [.width, .height]
+        contentView.addSubview(hostedView)
+
+        window.makeKeyAndOrderFront(nil)
+        window.displayIfNeeded()
+        contentView.layoutSubtreeIfNeeded()
+        hostedView.setVisibleInUI(true)
+        hostedView.setActive(true)
+        RunLoop.current.run(until: Date().addingTimeInterval(0.05))
+
+        guard let view = findGhosttyNSView(in: hostedView) else {
+            XCTFail("Expected hosted GhosttyNSView")
+            return
+        }
+
+        view.setMarkedText("한", selectedRange: NSRange(location: 0, length: 1), replacementRange: NSRange(location: NSNotFound, length: 0))
+
+        // Simulate Korean input source so shouldSendCommittedIMEConfirmKey fires
+        KeyboardLayout.debugInputSourceIdOverride = "com.apple.inputmethod.Korean.2SetKorean"
+        installCJKIMEInterpretKeyEventsSwizzle()
+        cjkIMEInterpretKeyEventsHook = { candidateView, _ in
+            guard candidateView === view else { return false }
+            candidateView.insertText("한", replacementRange: NSRange(location: NSNotFound, length: 0))
+            return true
+        }
+        defer {
+            KeyboardLayout.debugInputSourceIdOverride = nil
+            cjkIMEInterpretKeyEventsHook = nil
+        }
+
+        var sawReturnPress = false
+        GhosttyNSView.debugGhosttySurfaceKeyEventObserver = { keyEvent in
+            guard keyEvent.action == GHOSTTY_ACTION_PRESS,
+                  keyEvent.keycode == 36,
+                  keyEvent.text == nil else { return }
+            sawReturnPress = true
+        }
+
+        guard let event = NSEvent.keyEvent(
+            with: .keyDown,
+            location: .zero,
+            modifierFlags: [],
+            timestamp: ProcessInfo.processInfo.systemUptime,
+            windowNumber: window.windowNumber,
+            context: nil,
+            characters: "\r",
+            charactersIgnoringModifiers: "\r",
+            isARepeat: false,
+            keyCode: 36
+        ) else {
+            XCTFail("Failed to create Return event")
+            return
+        }
+
+        window.makeFirstResponder(view)
+        view.keyDown(with: event)
+
+        XCTAssertFalse(view.hasMarkedText(), "Return should commit the active Hangul composition")
+        XCTAssertTrue(sawReturnPress, "Return should still be forwarded after IME commit so the command executes once")
+    }
+}
+
+@MainActor
+final class KoreanIMEMarkedTextLeakRegressionTests: XCTestCase {
+    func testKeyDownDoesNotLeakJamoWhileMarkedTextIsActive() {
+        _ = NSApplication.shared
+
+        let surface = TerminalSurface(
+            tabId: UUID(),
+            context: GHOSTTY_SURFACE_CONTEXT_SPLIT,
+            configTemplate: nil,
+            workingDirectory: nil
+        )
+        let hostedView = surface.hostedView
+
+        let window = NSWindow(
+            contentRect: NSRect(x: 0, y: 0, width: 360, height: 240),
+            styleMask: [.titled, .closable],
+            backing: .buffered,
+            defer: false
+        )
+        defer {
+            GhosttyNSView.debugGhosttySurfaceKeyEventObserver = nil
+            KeyboardLayout.debugInputSourceIdOverride = nil
+            cjkIMEInterpretKeyEventsHook = nil
+            window.orderOut(nil)
+        }
+
+        guard let contentView = window.contentView else {
+            XCTFail("Expected content view")
+            return
+        }
+
+        hostedView.frame = contentView.bounds
+        hostedView.autoresizingMask = [.width, .height]
+        contentView.addSubview(hostedView)
+
+        window.makeKeyAndOrderFront(nil)
+        window.displayIfNeeded()
+        contentView.layoutSubtreeIfNeeded()
+        hostedView.setVisibleInUI(true)
+        hostedView.setActive(true)
+        RunLoop.current.run(until: Date().addingTimeInterval(0.05))
+
+        guard let view = findGhosttyNSView(in: hostedView) else {
+            XCTFail("Expected hosted GhosttyNSView")
+            return
+        }
+
+        view.setMarkedText(
+            "하",
+            selectedRange: NSRange(location: 0, length: 1),
+            replacementRange: NSRange(location: NSNotFound, length: 0)
+        )
+
+        KeyboardLayout.debugInputSourceIdOverride = "com.apple.inputmethod.Korean.2SetKorean"
+        installCJKIMEInterpretKeyEventsSwizzle()
+        cjkIMEInterpretKeyEventsHook = { candidateView, _ in
+            guard candidateView === view else { return false }
+            return true
+        }
+
+        var capturedEvent: ghostty_input_key_s?
+        GhosttyNSView.debugGhosttySurfaceKeyEventObserver = { keyEvent in
+            guard keyEvent.action == GHOSTTY_ACTION_PRESS, keyEvent.keycode == 45 else { return }
+            capturedEvent = keyEvent
+        }
+
+        guard let event = NSEvent.keyEvent(
+            with: .keyDown,
+            location: .zero,
+            modifierFlags: [],
+            timestamp: ProcessInfo.processInfo.systemUptime,
+            windowNumber: window.windowNumber,
+            context: nil,
+            characters: "ㄴ",
+            charactersIgnoringModifiers: "ㄴ",
+            isARepeat: false,
+            keyCode: 45
+        ) else {
+            XCTFail("Failed to create Hangul jamo event")
+            return
+        }
+
+        window.makeFirstResponder(view)
+        view.keyDown(with: event)
+
+        guard let capturedEvent else {
+            XCTFail(
+                "Expected a composing key event to be forwarded to Ghostty with text=nil; no event was received"
+            )
+            return
+        }
+
+        XCTAssertTrue(capturedEvent.composing, "Hangul composition keyDown should stay in composing mode")
+        XCTAssertNil(capturedEvent.text, "Uncommitted Hangul jamo must not be encoded into the terminal surface")
+        XCTAssertTrue(view.hasMarkedText(), "Composition should remain active until the IME commits or cancels")
+    }
+}
+
+@MainActor
+final class AccessibilityInsertTextRegressionTests: XCTestCase {
+    func testDirectInsertTextUsesTypedInputSemantics() {
+        _ = NSApplication.shared
+
+        let surface = TerminalSurface(
+            tabId: UUID(),
+            context: GHOSTTY_SURFACE_CONTEXT_SPLIT,
+            configTemplate: nil,
+            workingDirectory: nil
+        )
+        let hostedView = surface.hostedView
+
+        let window = NSWindow(
+            contentRect: NSRect(x: 0, y: 0, width: 360, height: 240),
+            styleMask: [.titled, .closable],
+            backing: .buffered,
+            defer: false
+        )
+        defer {
+            GhosttyNSView.debugGhosttySurfaceKeyEventObserver = nil
+            window.orderOut(nil)
+        }
+
+        guard let contentView = window.contentView else {
+            XCTFail("Expected content view")
+            return
+        }
+
+        hostedView.frame = contentView.bounds
+        hostedView.autoresizingMask = [.width, .height]
+        contentView.addSubview(hostedView)
+
+        window.makeKeyAndOrderFront(nil)
+        window.displayIfNeeded()
+        contentView.layoutSubtreeIfNeeded()
+        hostedView.setVisibleInUI(true)
+        hostedView.setActive(true)
+        RunLoop.current.run(until: Date().addingTimeInterval(0.05))
+
+        guard let view = findGhosttyNSView(in: hostedView) else {
+            XCTFail("Expected hosted GhosttyNSView")
+            return
+        }
+
+        var pressedText: [String] = []
+        var pressedKeycodes: [UInt32] = []
+        GhosttyNSView.debugGhosttySurfaceKeyEventObserver = { keyEvent in
+            guard keyEvent.action == GHOSTTY_ACTION_PRESS else { return }
+            if let text = keyEvent.text {
+                pressedText.append(String(cString: text))
+            } else {
+                pressedKeycodes.append(keyEvent.keycode)
+            }
+        }
+
+        view.insertText("dictated line\n", replacementRange: NSRange(location: NSNotFound, length: 0))
+
+        XCTAssertEqual(pressedText, ["dictated line"])
+        XCTAssertEqual(pressedKeycodes, [36], "Trailing newline should be delivered as Return, not pasted text")
+    }
+
+    func testDirectInsertTextPreservesLeadingEscapeForAutomation() {
+        _ = NSApplication.shared
+
+        let surface = TerminalSurface(
+            tabId: UUID(),
+            context: GHOSTTY_SURFACE_CONTEXT_SPLIT,
+            configTemplate: nil,
+            workingDirectory: nil
+        )
+        let hostedView = surface.hostedView
+
+        let window = NSWindow(
+            contentRect: NSRect(x: 0, y: 0, width: 360, height: 240),
+            styleMask: [.titled, .closable],
+            backing: .buffered,
+            defer: false
+        )
+        defer {
+            GhosttyNSView.debugGhosttySurfaceKeyEventObserver = nil
+            window.orderOut(nil)
+        }
+
+        guard let contentView = window.contentView else {
+            XCTFail("Expected content view")
+            return
+        }
+
+        hostedView.frame = contentView.bounds
+        hostedView.autoresizingMask = [.width, .height]
+        contentView.addSubview(hostedView)
+
+        window.makeKeyAndOrderFront(nil)
+        window.displayIfNeeded()
+        contentView.layoutSubtreeIfNeeded()
+        hostedView.setVisibleInUI(true)
+        hostedView.setActive(true)
+        RunLoop.current.run(until: Date().addingTimeInterval(0.05))
+
+        guard let view = findGhosttyNSView(in: hostedView) else {
+            XCTFail("Expected hosted GhosttyNSView")
+            return
+        }
+
+        var pressedText: [String] = []
+        var pressedKeycodes: [UInt32] = []
+        GhosttyNSView.debugGhosttySurfaceKeyEventObserver = { keyEvent in
+            guard keyEvent.action == GHOSTTY_ACTION_PRESS else { return }
+            if let text = keyEvent.text {
+                pressedText.append(String(cString: text))
+            } else {
+                pressedKeycodes.append(keyEvent.keycode)
+            }
+        }
+
+        view.insertText("\u{1B}[A", replacementRange: NSRange(location: NSNotFound, length: 0))
+
+        XCTAssertEqual(pressedText, ["\u{1B}[A"])
+        XCTAssertEqual(pressedKeycodes, [], "Direct NSTextInputClient insertText should preserve raw ESC bytes")
+    }
+
+    func testAccessibilityValueSanitizesLeadingEscapeSequence() {
+        _ = NSApplication.shared
+
+        let surface = TerminalSurface(
+            tabId: UUID(),
+            context: GHOSTTY_SURFACE_CONTEXT_SPLIT,
+            configTemplate: nil,
+            workingDirectory: nil
+        )
+        let hostedView = surface.hostedView
+
+        let window = NSWindow(
+            contentRect: NSRect(x: 0, y: 0, width: 360, height: 240),
+            styleMask: [.titled, .closable],
+            backing: .buffered,
+            defer: false
+        )
+        defer {
+            GhosttyNSView.debugGhosttySurfaceKeyEventObserver = nil
+            window.orderOut(nil)
+        }
+
+        guard let contentView = window.contentView else {
+            XCTFail("Expected content view")
+            return
+        }
+
+        hostedView.frame = contentView.bounds
+        hostedView.autoresizingMask = [.width, .height]
+        contentView.addSubview(hostedView)
+
+        window.makeKeyAndOrderFront(nil)
+        window.displayIfNeeded()
+        contentView.layoutSubtreeIfNeeded()
+        hostedView.setVisibleInUI(true)
+        hostedView.setActive(true)
+        RunLoop.current.run(until: Date().addingTimeInterval(0.05))
+
+        guard let view = findGhosttyNSView(in: hostedView) else {
+            XCTFail("Expected hosted GhosttyNSView")
+            return
+        }
+
+        var pressedText: [String] = []
+        var pressedKeycodes: [UInt32] = []
+        GhosttyNSView.debugGhosttySurfaceKeyEventObserver = { keyEvent in
+            guard keyEvent.action == GHOSTTY_ACTION_PRESS else { return }
+            if let text = keyEvent.text {
+                pressedText.append(String(cString: text))
+            } else {
+                pressedKeycodes.append(keyEvent.keycode)
+            }
+        }
+
+        view.setAccessibilityValue("\u{1B}[Adictated line\n")
+
+        XCTAssertEqual(pressedText, ["dictated line"])
+        XCTAssertEqual(pressedKeycodes, [36], "AX value insertion should sanitize injected ESC prefixes before sending text")
+    }
+}
+
 final class GhosttyBackquoteRegressionTests: XCTestCase {
     func testShiftBackquoteEscFallbackSendsLiteralTilde() {
         _ = NSApplication.shared
@@ -991,6 +1535,413 @@ final class GhosttyBackquoteRegressionTests: XCTestCase {
         XCTAssertTrue(sent, "Expected synthetic Shift+backquote event to be dispatched")
         XCTAssertEqual(pressText, "~")
         XCTAssertEqual(pressUnshiftedCodepoint, "`".unicodeScalars.first?.value)
+    }
+}
+
+@MainActor
+final class GhosttyKeyEquivalentRegressionTests: XCTestCase {
+    private struct PasteboardItemSnapshot {
+        let representations: [(type: NSPasteboard.PasteboardType, data: Data)]
+    }
+
+    private struct HostedTerminalWindow {
+        let surface: TerminalSurface
+        let window: NSWindow
+        let hostedView: GhosttySurfaceScrollView
+        let surfaceView: GhosttyNSView
+    }
+
+    private func makeHostedTerminalWindow() throws -> HostedTerminalWindow {
+        _ = NSApplication.shared
+
+        let surface = TerminalSurface(
+            tabId: UUID(),
+            context: GHOSTTY_SURFACE_CONTEXT_SPLIT,
+            configTemplate: nil,
+            workingDirectory: nil
+        )
+        let hostedView = surface.hostedView
+
+        let window = NSWindow(
+            contentRect: NSRect(x: 0, y: 0, width: 360, height: 240),
+            styleMask: [.titled, .closable],
+            backing: .buffered,
+            defer: false
+        )
+
+        let contentView = try XCTUnwrap(window.contentView)
+        hostedView.frame = contentView.bounds
+        hostedView.autoresizingMask = [.width, .height]
+        contentView.addSubview(hostedView)
+
+        window.makeKeyAndOrderFront(nil)
+        window.displayIfNeeded()
+        contentView.layoutSubtreeIfNeeded()
+        hostedView.setVisibleInUI(true)
+        hostedView.setActive(true)
+        RunLoop.current.run(until: Date().addingTimeInterval(0.05))
+
+        let surfaceView = try XCTUnwrap(findGhosttyNSView(in: hostedView))
+        return HostedTerminalWindow(
+            surface: surface,
+            window: window,
+            hostedView: hostedView,
+            surfaceView: surfaceView
+        )
+    }
+
+    private func snapshotPasteboardItems(_ pasteboard: NSPasteboard) -> [PasteboardItemSnapshot] {
+        guard let items = pasteboard.pasteboardItems else { return [] }
+        return items.map { item in
+            let representations = item.types.compactMap { type -> (NSPasteboard.PasteboardType, Data)? in
+                guard let data = item.data(forType: type) else { return nil }
+                return (type, data)
+            }
+            return PasteboardItemSnapshot(representations: representations)
+        }
+    }
+
+    private func restorePasteboardItems(
+        _ snapshots: [PasteboardItemSnapshot],
+        to pasteboard: NSPasteboard
+    ) {
+        pasteboard.clearContents()
+        guard !snapshots.isEmpty else { return }
+        let items = snapshots.compactMap { snapshot -> NSPasteboardItem? in
+            let item = NSPasteboardItem()
+            guard !snapshot.representations.isEmpty else { return nil }
+            for representation in snapshot.representations {
+                item.setData(representation.data, forType: representation.type)
+            }
+            return item
+        }
+        if !items.isEmpty {
+            _ = pasteboard.writeObjects(items)
+        }
+    }
+
+    private func installUnrelatedMainMenu() -> NSMenu {
+        let mainMenu = NSMenu()
+        let fileItem = NSMenuItem(title: "File", action: nil, keyEquivalent: "")
+        let fileMenu = NSMenu(title: "File")
+        let item = NSMenuItem(title: "New", action: nil, keyEquivalent: "n")
+        item.keyEquivalentModifierMask = [.command]
+        fileMenu.addItem(item)
+        mainMenu.addItem(fileItem)
+        mainMenu.setSubmenu(fileMenu, for: fileItem)
+        return mainMenu
+    }
+
+    func testShiftSlashPrintableKeyEquivalentBypassesShortcutPath() throws {
+        let hostedTerminal = try makeHostedTerminalWindow()
+        let window = hostedTerminal.window
+        let surfaceView = hostedTerminal.surfaceView
+        defer { window.orderOut(nil) }
+
+        window.makeFirstResponder(surfaceView)
+        XCTAssertNotNil(surfaceView.terminalSurface)
+
+        guard let event = NSEvent.keyEvent(
+            with: .keyDown,
+            location: .zero,
+            modifierFlags: [.shift],
+            timestamp: ProcessInfo.processInfo.systemUptime,
+            windowNumber: window.windowNumber,
+            context: nil,
+            characters: "/",
+            charactersIgnoringModifiers: "/",
+            isARepeat: false,
+            keyCode: 26 // ABC-QWERTZ Shift+7
+        ) else {
+            XCTFail("Failed to construct Shift+/ event")
+            return
+        }
+
+        withExtendedLifetime(hostedTerminal.surface) {
+            XCTAssertFalse(
+                window.performKeyEquivalent(with: event),
+                "Printable Shift+/ should continue through keyDown instead of being consumed as a key equivalent"
+            )
+        }
+    }
+
+    func testShiftQuestionMarkPrintableKeyEquivalentBypassesShortcutPath() throws {
+        let hostedTerminal = try makeHostedTerminalWindow()
+        let window = hostedTerminal.window
+        let surfaceView = hostedTerminal.surfaceView
+        defer { window.orderOut(nil) }
+
+        window.makeFirstResponder(surfaceView)
+        XCTAssertNotNil(surfaceView.terminalSurface)
+
+        guard let event = NSEvent.keyEvent(
+            with: .keyDown,
+            location: .zero,
+            modifierFlags: [.shift],
+            timestamp: ProcessInfo.processInfo.systemUptime,
+            windowNumber: window.windowNumber,
+            context: nil,
+            characters: "?",
+            charactersIgnoringModifiers: "?",
+            isARepeat: false,
+            keyCode: 27 // ABC-QWERTZ Shift+-
+        ) else {
+            XCTFail("Failed to construct Shift+? event")
+            return
+        }
+
+        withExtendedLifetime(hostedTerminal.surface) {
+            XCTAssertFalse(
+                window.performKeyEquivalent(with: event),
+                "Printable Shift+? should continue through keyDown instead of being consumed as a key equivalent"
+            )
+        }
+    }
+
+    // MARK: - Terminal Paste Fallback
+
+    func testCommandVPasteStillInvokesTerminalPasteWhenMainMenuMisses() throws {
+        installGhosttyPasteActionSwizzle()
+
+        let hostedTerminal = try makeHostedTerminalWindow()
+        let terminalSurface = hostedTerminal.surface
+        let window = hostedTerminal.window
+        let surfaceView = hostedTerminal.surfaceView
+        defer { window.orderOut(nil) }
+
+        window.makeFirstResponder(surfaceView)
+        XCTAssertNotNil(surfaceView.terminalSurface)
+
+        let previousMainMenu = NSApp.mainMenu
+        NSApp.mainMenu = installUnrelatedMainMenu()
+        defer { NSApp.mainMenu = previousMainMenu }
+
+        let pasteboard = NSPasteboard.general
+        let pasteboardSnapshot = snapshotPasteboardItems(pasteboard)
+        defer { restorePasteboardItems(pasteboardSnapshot, to: pasteboard) }
+        pasteboard.clearContents()
+        pasteboard.setString("opencode paste", forType: .string)
+
+        var pasteInvocationCount = 0
+        let previousPasteHook = ghosttyPasteActionHook
+        ghosttyPasteActionHook = { candidateView, sender in
+            previousPasteHook?(candidateView, sender)
+            guard candidateView === surfaceView else { return }
+            pasteInvocationCount += 1
+        }
+        defer { ghosttyPasteActionHook = previousPasteHook }
+
+        var forwardedCommandVCount = 0
+        let previousKeyEventObserver = GhosttyNSView.debugGhosttySurfaceKeyEventObserver
+        GhosttyNSView.debugGhosttySurfaceKeyEventObserver = { keyEvent in
+            previousKeyEventObserver?(keyEvent)
+            guard keyEvent.action == GHOSTTY_ACTION_PRESS, keyEvent.keycode == 9 else { return }
+            forwardedCommandVCount += 1
+        }
+        defer {
+            GhosttyNSView.debugGhosttySurfaceKeyEventObserver = previousKeyEventObserver
+        }
+
+        guard let event = NSEvent.keyEvent(
+            with: .keyDown,
+            location: .zero,
+            modifierFlags: [.command],
+            timestamp: ProcessInfo.processInfo.systemUptime,
+            windowNumber: window.windowNumber,
+            context: nil,
+            characters: "v",
+            charactersIgnoringModifiers: "v",
+            isARepeat: false,
+            keyCode: 9
+        ) else {
+            XCTFail("Failed to construct Cmd+V event")
+            return
+        }
+
+        withExtendedLifetime(terminalSurface) {
+            XCTAssertTrue(window.performKeyEquivalent(with: event))
+            XCTAssertEqual(
+                pasteInvocationCount,
+                1,
+                "Cmd+V should still invoke the terminal paste action even if the window main-menu fast path misses"
+            )
+            XCTAssertEqual(
+                forwardedCommandVCount,
+                0,
+                "Cmd+V should not fall back to Ghostty keyDown when the terminal paste action is available"
+            )
+        }
+    }
+
+    func testCommandShiftVPasteAsPlainTextStillInvokesTerminalFallbackWhenMainMenuMisses() throws {
+        installGhosttyPasteActionSwizzle()
+
+        let hostedTerminal = try makeHostedTerminalWindow()
+        let terminalSurface = hostedTerminal.surface
+        let window = hostedTerminal.window
+        let surfaceView = hostedTerminal.surfaceView
+        defer { window.orderOut(nil) }
+
+        window.makeFirstResponder(surfaceView)
+        XCTAssertNotNil(surfaceView.terminalSurface)
+
+        let previousMainMenu = NSApp.mainMenu
+        NSApp.mainMenu = installUnrelatedMainMenu()
+        defer { NSApp.mainMenu = previousMainMenu }
+
+        let pasteboard = NSPasteboard.general
+        let pasteboardSnapshot = snapshotPasteboardItems(pasteboard)
+        defer { restorePasteboardItems(pasteboardSnapshot, to: pasteboard) }
+        pasteboard.clearContents()
+        pasteboard.setString("opencode paste plain text", forType: .string)
+
+        var pasteInvocationCount = 0
+        let previousPasteHook = ghosttyPasteActionHook
+        ghosttyPasteActionHook = { candidateView, sender in
+            previousPasteHook?(candidateView, sender)
+            guard candidateView === surfaceView else { return }
+            pasteInvocationCount += 1
+        }
+        defer { ghosttyPasteActionHook = previousPasteHook }
+
+        var pasteAsPlainTextInvocationCount = 0
+        let previousPasteAsPlainTextHook = ghosttyPasteAsPlainTextActionHook
+        ghosttyPasteAsPlainTextActionHook = { candidateView, sender in
+            previousPasteAsPlainTextHook?(candidateView, sender)
+            guard candidateView === surfaceView else { return }
+            pasteAsPlainTextInvocationCount += 1
+        }
+        defer { ghosttyPasteAsPlainTextActionHook = previousPasteAsPlainTextHook }
+
+        var forwardedCommandVCount = 0
+        let previousKeyEventObserver = GhosttyNSView.debugGhosttySurfaceKeyEventObserver
+        GhosttyNSView.debugGhosttySurfaceKeyEventObserver = { keyEvent in
+            previousKeyEventObserver?(keyEvent)
+            guard keyEvent.action == GHOSTTY_ACTION_PRESS, keyEvent.keycode == 9 else { return }
+            forwardedCommandVCount += 1
+        }
+        defer {
+            GhosttyNSView.debugGhosttySurfaceKeyEventObserver = previousKeyEventObserver
+        }
+
+        guard let event = NSEvent.keyEvent(
+            with: .keyDown,
+            location: .zero,
+            modifierFlags: [.command, .shift],
+            timestamp: ProcessInfo.processInfo.systemUptime,
+            windowNumber: window.windowNumber,
+            context: nil,
+            characters: "V",
+            charactersIgnoringModifiers: "v",
+            isARepeat: false,
+            keyCode: 9
+        ) else {
+            XCTFail("Failed to construct Cmd+Shift+V event")
+            return
+        }
+
+        withExtendedLifetime(terminalSurface) {
+            XCTAssertTrue(window.performKeyEquivalent(with: event))
+            XCTAssertEqual(
+                pasteInvocationCount,
+                0,
+                "Cmd+Shift+V should route through pasteAsPlainText instead of the regular terminal paste action"
+            )
+            XCTAssertEqual(
+                pasteAsPlainTextInvocationCount,
+                1,
+                "Cmd+Shift+V should still invoke the terminal pasteAsPlainText action even if the window main-menu fast path misses"
+            )
+            XCTAssertEqual(
+                forwardedCommandVCount,
+                0,
+                "Cmd+Shift+V should not fall back to Ghostty keyDown when the terminal plain-text paste action is available"
+            )
+        }
+    }
+
+    func testCommandVPasteRecreatesReleasedSurfaceBeforeConsumption() throws {
+        installGhosttyPasteActionSwizzle()
+
+        let hostedTerminal = try makeHostedTerminalWindow()
+        let terminalSurface = hostedTerminal.surface
+        let window = hostedTerminal.window
+        let surfaceView = hostedTerminal.surfaceView
+        defer { window.orderOut(nil) }
+
+        window.makeFirstResponder(surfaceView)
+        XCTAssertNotNil(surfaceView.terminalSurface)
+        XCTAssertNotNil(terminalSurface.surface)
+
+        let previousMainMenu = NSApp.mainMenu
+        NSApp.mainMenu = installUnrelatedMainMenu()
+        defer { NSApp.mainMenu = previousMainMenu }
+
+        let pasteboard = NSPasteboard.general
+        let pasteboardSnapshot = snapshotPasteboardItems(pasteboard)
+        defer { restorePasteboardItems(pasteboardSnapshot, to: pasteboard) }
+        pasteboard.clearContents()
+        pasteboard.setString("surface recovery paste", forType: .string)
+
+        var pasteInvocationCount = 0
+        let previousPasteHook = ghosttyPasteActionHook
+        ghosttyPasteActionHook = { candidateView, sender in
+            previousPasteHook?(candidateView, sender)
+            guard candidateView === surfaceView else { return }
+            pasteInvocationCount += 1
+        }
+        defer { ghosttyPasteActionHook = previousPasteHook }
+
+        var forwardedCommandVCount = 0
+        let previousKeyEventObserver = GhosttyNSView.debugGhosttySurfaceKeyEventObserver
+        GhosttyNSView.debugGhosttySurfaceKeyEventObserver = { keyEvent in
+            previousKeyEventObserver?(keyEvent)
+            guard keyEvent.action == GHOSTTY_ACTION_PRESS, keyEvent.keycode == 9 else { return }
+            forwardedCommandVCount += 1
+        }
+        defer {
+            GhosttyNSView.debugGhosttySurfaceKeyEventObserver = previousKeyEventObserver
+        }
+
+        terminalSurface.releaseSurfaceForTesting()
+        XCTAssertNil(
+            terminalSurface.surface,
+            "Expected the runtime Ghostty surface to be released before simulating Cmd+V"
+        )
+
+        guard let event = NSEvent.keyEvent(
+            with: .keyDown,
+            location: .zero,
+            modifierFlags: [.command],
+            timestamp: ProcessInfo.processInfo.systemUptime,
+            windowNumber: window.windowNumber,
+            context: nil,
+            characters: "v",
+            charactersIgnoringModifiers: "v",
+            isARepeat: false,
+            keyCode: 9
+        ) else {
+            XCTFail("Failed to construct Cmd+V event")
+            return
+        }
+
+        withExtendedLifetime(terminalSurface) {
+            XCTAssertTrue(window.performKeyEquivalent(with: event))
+            XCTAssertEqual(
+                pasteInvocationCount,
+                1,
+                "Cmd+V should still invoke the terminal paste action after a transient surface release"
+            )
+            XCTAssertEqual(
+                forwardedCommandVCount,
+                0,
+                "Cmd+V should recover the Ghostty surface without falling back to keyDown"
+            )
+            XCTAssertNotNil(
+                terminalSurface.surface,
+                "Cmd+V should recreate the Ghostty surface before the direct terminal paste fallback consumes the shortcut"
+            )
+        }
     }
 }
 

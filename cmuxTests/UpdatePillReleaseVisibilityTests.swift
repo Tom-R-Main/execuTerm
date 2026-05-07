@@ -192,3 +192,135 @@ final class TitlebarControlsHoverPolicyTests: XCTestCase {
         XCTAssertFalse(titlebarControlsShouldTrackButtonHover(config: TitlebarControlsStyle.softButtons.config))
     }
 }
+
+final class AppIconAppearanceObserverTests: XCTestCase {
+    private final class ObservationToken: AppIconAppearanceObservation {
+        private(set) var invalidateCallCount = 0
+
+        func invalidate() {
+            invalidateCallCount += 1
+        }
+    }
+
+    private final class Harness {
+        var isFinishedLaunching = false
+        var isDark = false
+        var startObservationCallCount = 0
+        var currentAppearanceIsDarkCallCount = 0
+        var imageRequests: [String] = []
+        var appliedIconCount = 0
+        var didFinishLaunchingObserverCount = 0
+        private(set) var didFinishLaunchingHandler: (() -> Void)?
+        private(set) var appearanceHandler: (() -> Void)?
+        let observation = ObservationToken()
+
+        lazy var environment = AppIconAppearanceObserver.Environment(
+            isApplicationFinishedLaunching: { [unowned self] in
+                self.isFinishedLaunching
+            },
+            startEffectiveAppearanceObservation: { [unowned self] handler in
+                self.startObservationCallCount += 1
+                self.appearanceHandler = handler
+                return self.observation
+            },
+            addDidFinishLaunchingObserver: { [unowned self] handler in
+                self.didFinishLaunchingObserverCount += 1
+                self.didFinishLaunchingHandler = handler
+                return NSObject()
+            },
+            removeObserver: { _ in },
+            currentAppearanceIsDark: { [unowned self] in
+                self.currentAppearanceIsDarkCallCount += 1
+                return self.isDark
+            },
+            imageForName: { [unowned self] imageName in
+                self.imageRequests.append(imageName)
+                return NSImage(size: NSSize(width: 1, height: 1))
+            },
+            setApplicationIconImage: { [unowned self] _ in
+                self.appliedIconCount += 1
+            }
+        )
+
+        func fireDidFinishLaunching() {
+            didFinishLaunchingHandler?()
+        }
+
+        func fireAppearanceChanged() {
+            appearanceHandler?()
+        }
+    }
+
+    func testStartObservingDefersInitialApplyUntilLaunch() {
+        let harness = Harness()
+        let observer = AppIconAppearanceObserver(environment: harness.environment)
+
+        observer.startObserving()
+
+        XCTAssertEqual(harness.didFinishLaunchingObserverCount, 1)
+        XCTAssertEqual(harness.startObservationCallCount, 0)
+        XCTAssertEqual(harness.currentAppearanceIsDarkCallCount, 0)
+        XCTAssertTrue(harness.imageRequests.isEmpty)
+
+        harness.isFinishedLaunching = true
+        harness.fireDidFinishLaunching()
+
+        XCTAssertEqual(harness.startObservationCallCount, 1)
+        XCTAssertEqual(harness.currentAppearanceIsDarkCallCount, 1)
+        XCTAssertEqual(harness.imageRequests, ["AppIconLight"])
+        XCTAssertEqual(harness.appliedIconCount, 1)
+    }
+
+    func testStopObservingCancelsDeferredLaunchApply() {
+        let harness = Harness()
+        let observer = AppIconAppearanceObserver(environment: harness.environment)
+
+        observer.startObserving()
+        observer.stopObserving()
+        harness.isFinishedLaunching = true
+        harness.fireDidFinishLaunching()
+
+        XCTAssertEqual(harness.startObservationCallCount, 0)
+        XCTAssertEqual(harness.currentAppearanceIsDarkCallCount, 0)
+        XCTAssertTrue(harness.imageRequests.isEmpty)
+        XCTAssertEqual(harness.appliedIconCount, 0)
+    }
+
+    func testStopObservingInvalidatesActiveObservation() {
+        let harness = Harness()
+        harness.isFinishedLaunching = true
+        let observer = AppIconAppearanceObserver(environment: harness.environment)
+
+        observer.startObserving()
+        observer.stopObserving()
+
+        XCTAssertEqual(harness.startObservationCallCount, 1)
+        XCTAssertEqual(harness.observation.invalidateCallCount, 1)
+    }
+
+    func testUnchangedAutomaticAppearanceDoesNotReapplyIcon() {
+        let harness = Harness()
+        harness.isFinishedLaunching = true
+        let observer = AppIconAppearanceObserver(environment: harness.environment)
+
+        observer.startObserving()
+        harness.fireAppearanceChanged()
+
+        XCTAssertEqual(harness.currentAppearanceIsDarkCallCount, 2)
+        XCTAssertEqual(harness.imageRequests, ["AppIconLight"])
+        XCTAssertEqual(harness.appliedIconCount, 1)
+    }
+
+    func testAutomaticAppearanceChangeAppliesNewIcon() {
+        let harness = Harness()
+        harness.isFinishedLaunching = true
+        let observer = AppIconAppearanceObserver(environment: harness.environment)
+
+        observer.startObserving()
+        harness.isDark = true
+        harness.fireAppearanceChanged()
+
+        XCTAssertEqual(harness.imageRequests, ["AppIconLight", "AppIconDark"])
+        XCTAssertEqual(harness.appliedIconCount, 2)
+    }
+}
