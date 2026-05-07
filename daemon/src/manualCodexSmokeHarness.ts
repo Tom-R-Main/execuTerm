@@ -166,11 +166,12 @@ async function waitForWorkspace(
       agents?: Array<{
         workspaceId?: string;
         workItemId?: string;
+        state?: string;
         sourceControl?: { worktreePath?: string };
       }>;
     }>(`${dashboardUrl}/api/status`);
     const agent = status.agents?.find((candidate) => candidate.workItemId === workItemId);
-    if (agent?.workspaceId && agent.sourceControl?.worktreePath) {
+    if (agent?.workspaceId && agent.state === 'running' && agent.sourceControl?.worktreePath) {
       return {
         workspaceId: agent.workspaceId,
         worktreePath: agent.sourceControl.worktreePath,
