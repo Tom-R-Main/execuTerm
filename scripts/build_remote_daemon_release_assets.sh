@@ -10,9 +10,12 @@ Usage: scripts/build_remote_daemon_release_assets.sh \
   --output-dir <dir>
 
 Builds executerm-remote-daemon release assets for the supported remote platforms and emits:
-  executerm-remote-daemon-<goos>-<goarch>
-  executerm-remote-daemon-checksums.txt
-  executerm-remote-daemon-manifest.json
+  cmuxd-remote-<goos>-<goarch>
+  cmuxd-remote-checksums.txt
+  cmuxd-remote-manifest.json
+
+Optional:
+  --asset-suffix <suffix> appends -<suffix> before manifest/checksum extensions
 EOF
 }
 
@@ -20,6 +23,7 @@ VERSION=""
 RELEASE_TAG=""
 REPO=""
 OUTPUT_DIR=""
+ASSET_SUFFIX=""
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -37,6 +41,10 @@ while [[ $# -gt 0 ]]; do
       ;;
     --output-dir)
       OUTPUT_DIR="${2:-}"
+      shift 2
+      ;;
+    --asset-suffix)
+      ASSET_SUFFIX="${2:-}"
       shift 2
       ;;
     -h|--help)
@@ -67,7 +75,7 @@ REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 DAEMON_ROOT="${REPO_ROOT}/daemon/remote"
 mkdir -p "$OUTPUT_DIR"
 OUTPUT_DIR="$(cd "$OUTPUT_DIR" && pwd)"
-rm -f "$OUTPUT_DIR"/executerm-remote-daemon-* "$OUTPUT_DIR"/executerm-remote-daemon-checksums.txt "$OUTPUT_DIR"/executerm-remote-daemon-manifest.json
+rm -f "$OUTPUT_DIR"/cmuxd-remote-*
 
 DAEMON_GO_LDFLAGS="-s -w -X main.version=${VERSION}"
 DAEMON_GO_BUILD_ARGS=(
@@ -77,9 +85,14 @@ DAEMON_GO_BUILD_ARGS=(
   -ldflags "$DAEMON_GO_LDFLAGS"
 )
 
-CHECKSUMS_ASSET_NAME="executerm-remote-daemon-checksums.txt"
+SUFFIX_PART=""
+if [[ -n "$ASSET_SUFFIX" ]]; then
+  SUFFIX_PART="-${ASSET_SUFFIX}"
+fi
+
+CHECKSUMS_ASSET_NAME="cmuxd-remote-checksums${SUFFIX_PART}.txt"
 CHECKSUMS_PATH="${OUTPUT_DIR}/${CHECKSUMS_ASSET_NAME}"
-MANIFEST_PATH="${OUTPUT_DIR}/executerm-remote-daemon-manifest.json"
+MANIFEST_PATH="${OUTPUT_DIR}/cmuxd-remote-manifest${SUFFIX_PART}.json"
 
 TARGETS=(
   "darwin arm64"
@@ -95,7 +108,7 @@ trap 'rm -f "$ENTRIES_FILE"' EXIT
 
 for target in "${TARGETS[@]}"; do
   read -r GOOS GOARCH <<<"$target"
-  ASSET_NAME="executerm-remote-daemon-${GOOS}-${GOARCH}"
+  ASSET_NAME="cmuxd-remote-${GOOS}-${GOARCH}${SUFFIX_PART}"
   OUTPUT_PATH="${OUTPUT_DIR}/${ASSET_NAME}"
 
   (
