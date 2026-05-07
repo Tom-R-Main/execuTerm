@@ -3,6 +3,7 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 
 import { DirectoryManager, DirectoryRequiredError } from './directoryManager.js';
+import { readDaemonConfig, writeDaemonConfig } from '../config.js';
 import type { DaemonConfig } from '../types.js';
 
 describe('DirectoryManager', () => {
@@ -107,6 +108,54 @@ describe('DirectoryManager', () => {
       lastLaunchDirectory: null,
       projectAgentPreferences: { 'project-1': 'claude-code' },
       lastAgentType: 'codex',
+    });
+  });
+
+  it('preserves current VCS config when persisting directory updates', () => {
+    const launchDir = join(sandboxDir, 'launch-vcs');
+    const worktreeRoot = join(sandboxDir, 'worktrees');
+    mkdirSync(launchDir, { recursive: true });
+    mkdirSync(worktreeRoot, { recursive: true });
+
+    const config: DaemonConfig = {
+      apiUrl: 'https://execufunction.com',
+      pollIntervalMs: 10000,
+      dashboardRefreshMode: 'timed',
+      dashboardRefreshIntervalMs: 10000,
+      projectDirectories: {},
+      recentDirectories: [],
+      vcs: {
+        enabled: false,
+        worktreeRoot,
+        jjEnabled: false,
+        autoCreateWorktree: false,
+        autoMerge: false,
+        allowPush: false,
+      },
+    };
+
+    const manager = new DirectoryManager(config);
+    writeDaemonConfig({
+      ...readDaemonConfig(),
+      vcs: {
+        enabled: true,
+        worktreeRoot,
+        jjEnabled: false,
+        autoCreateWorktree: true,
+        autoMerge: false,
+        allowPush: false,
+      },
+    });
+
+    manager.setLastLaunchDirectory(launchDir);
+
+    expect(readDaemonConfig().vcs).toEqual({
+      enabled: true,
+      worktreeRoot,
+      jjEnabled: false,
+      autoCreateWorktree: true,
+      autoMerge: false,
+      allowPush: false,
     });
   });
 

@@ -23,6 +23,7 @@ export interface AgentWorkItemResponse {
   claimOwner?: string | null;
   claimToken?: string | null;
   claimExpiresAt?: string | null;
+  verificationCommands?: string[];
   artifactRefs?: unknown[];
   updatedAt?: string;
 }
@@ -275,6 +276,14 @@ export class ExfClient {
       'POST',
       `/api/v1/work-items/${encodeURIComponent(id)}/heartbeat`,
       input
+    );
+  }
+
+  async appendWorkItemArtifacts(id: string, artifactRefs: unknown[]) {
+    return this.request<{ workItem: AgentWorkItemResponse }>(
+      'POST',
+      `/api/v1/work-items/${encodeURIComponent(id)}/artifacts`,
+      { artifactRefs }
     );
   }
 

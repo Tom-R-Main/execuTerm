@@ -4,7 +4,7 @@ import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 
 import type { AgentType, DaemonConfig } from '../types.js';
-import { writeDaemonConfig } from '../config.js';
+import { readDaemonConfig, writeDaemonConfig } from '../config.js';
 
 const execFileAsync = promisify(execFile);
 const MAX_RECENT_DIRECTORIES = 8;
@@ -186,7 +186,15 @@ export class DirectoryManager {
   }
 
   private persist(): void {
-    writeDaemonConfig(this.config);
+    const latest = readDaemonConfig();
+    writeDaemonConfig({
+      ...latest,
+      projectDirectories: this.config.projectDirectories,
+      recentDirectories: this.config.recentDirectories,
+      lastLaunchDirectory: this.config.lastLaunchDirectory,
+      projectAgentPreferences: this.config.projectAgentPreferences,
+      lastAgentType: this.config.lastAgentType,
+    });
   }
 
   private normalizeStoredState(): void {

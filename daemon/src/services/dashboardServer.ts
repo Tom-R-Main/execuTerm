@@ -7,6 +7,11 @@ import type { WorkspaceManager } from './workspaceManager.js';
 import type { TaskDispatcher } from './taskDispatcher.js';
 import type { AugmentLog } from './augmentLog.js';
 import { RepoDetector } from './vcs/repoDetector.js';
+import {
+  latestVerificationArtifact,
+  WorkItemVerificationError,
+  WorkItemVerificationService,
+} from './workItemVerificationService.js';
 import type { ExfClient } from '../exfClient.js';
 import type { ExecuTermSocket } from '../execuTermSocket.js';
 import type {
@@ -68,6 +73,7 @@ export class DashboardServer {
   private port = 0;
   private readonly dashboardToken = randomUUID();
   private readonly repoDetector = new RepoDetector();
+  private readonly verificationService = new WorkItemVerificationService();
 
   constructor(
     private getAgentManager: () => AgentManager | null,
@@ -178,7 +184,13 @@ export class DashboardServer {
       return;
     }
 
-    const reviewMatch = url.pathname.match(/^\/api\/work-items\/([^/]+)\/(approve|changes|dismiss)$/);
+    const checksMatch = url.pathname.match(/^\/api\/work-items\/([^/]+)\/(run-checks|rerun-failed-checks)$/);
+    if (checksMatch && req.method === 'POST') {
+      await this.handleWorkItemVerification(checksMatch[1], checksMatch[2], res);
+      return;
+    }
+
+    const reviewMatch = url.pathname.match(/^\/api\/work-items\/([^/]+)\/(approve|approve-anyway|changes|changes-with-output|dismiss)$/);
     if (reviewMatch && req.method === 'POST') {
       await this.handleWorkItemReviewAction(reviewMatch[1], reviewMatch[2], req, res);
       return;
@@ -547,11 +559,13 @@ export class DashboardServer {
         ? parsed.note.trim()
         : undefined;
       let result: unknown;
-      if (action === 'approve') {
+      if (action === 'approve' || action === 'approve-anyway') {
         result = await exfClient.completeWorkItem(workItemId, {
-          resultSummary: note || 'Approved from execuTerm dashboard.',
+          resultSummary: note || (action === 'approve-anyway'
+            ? 'Approved from execuTerm dashboard despite verification warnings.'
+            : 'Approved from execuTerm dashboard.'),
         });
-      } else if (action === 'changes') {
+      } else if (action === 'changes' || action === 'changes-with-output') {
         result = await exfClient.releaseWorkItem(workItemId, {});
       } else if (action === 'dismiss') {
         result = await exfClient.cancelWorkItem(workItemId, {
@@ -570,6 +584,52 @@ export class DashboardServer {
       res.end(
         JSON.stringify({
           error: err instanceof Error ? err.message : 'Work item review action failed',
+        })
+      );
+    }
+  }
+
+  private async handleWorkItemVerification(
+    workItemId: string,
+    action: string,
+    res: http.ServerResponse
+  ): Promise<void> {
+    const exfClient = this.getExfClient();
+    if (!exfClient) {
+      res.writeHead(503, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: 'Not authenticated' }));
+      return;
+    }
+
+    try {
+      const result = await exfClient.getWorkItem(workItemId);
+      const workItem = result.data?.workItem;
+      if (!workItem) {
+        res.writeHead(result.statusCode >= 400 ? result.statusCode : 404, {
+          'Content-Type': 'application/json',
+        });
+        res.end(JSON.stringify({ error: result.error || 'Work item not found' }));
+        return;
+      }
+      const artifact = await this.verificationService.run(workItem, {
+        rerunFailedFrom: action === 'rerun-failed-checks'
+          ? latestVerificationArtifact(workItem)
+          : undefined,
+      });
+      const appendResult = await exfClient.appendWorkItemArtifacts(workItemId, [artifact]);
+      if (appendResult.statusCode >= 400) {
+        res.writeHead(appendResult.statusCode, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: appendResult.error || 'Verification artifact persistence failed' }));
+        return;
+      }
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ ok: true, artifact, workItem: appendResult.data?.workItem }));
+    } catch (err) {
+      const status = err instanceof WorkItemVerificationError ? 400 : 500;
+      res.writeHead(status, { 'Content-Type': 'application/json' });
+      res.end(
+        JSON.stringify({
+          error: err instanceof Error ? err.message : 'Work item verification failed',
         })
       );
     }
@@ -758,7 +818,10 @@ export class DashboardServer {
 
   private async serveStatus(res: http.ServerResponse): Promise<void> {
     const agentManager = this.getAgentManager();
-    const sessions = agentManager?.getAllSessions() ?? [];
+    const sessions = (agentManager?.getAllSessions() ?? []).map((agent) => ({
+      ...agent,
+      sourceControl: this.workspaceManager.getWorkspace(agent.workspaceId)?.sourceControl,
+    }));
     const activeAgents = (agentManager?.getActiveSessions() ?? []).map((agent) => ({
       ...agent,
       attachedContextCount: this.workspaceManager.getAttachedContextItems(
@@ -2238,6 +2301,29 @@ export class DashboardServer {
     .work-item-row__actions { display: flex; gap: 4px; flex-shrink: 0; }
     .work-item-row__actions button { font-family: var(--font-mono); font-size: 9px; color: var(--text-dim); background: var(--bg); border: 1px solid var(--border); border-radius: 3px; padding: 3px 6px; cursor: pointer; }
     .work-item-row__actions button:hover { color: var(--text); background: var(--surface); }
+    .work-review-card { display: grid; gap: 8px; padding: 9px; border: 1px solid var(--border-subtle); border-radius: 5px; background: var(--bg); margin-top: 6px; }
+    .work-review-card__title { display: flex; align-items: center; justify-content: space-between; gap: 8px; font-size: 12px; color: var(--text); }
+    .work-review-card__grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; }
+    .work-review-card__field { min-width: 0; font-family: var(--font-mono); font-size: 10px; color: var(--text-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .work-review-card__field strong { color: var(--text-dim); font-weight: 500; }
+    .work-review-card__files { display: flex; flex-wrap: wrap; gap: 4px; }
+    .work-review-card__file { font-family: var(--font-mono); font-size: 9px; color: var(--text-dim); border: 1px solid var(--border-subtle); border-radius: 3px; padding: 2px 5px; background: var(--surface); }
+    .work-review-card__diff { font-family: var(--font-mono); font-size: 10px; color: var(--text-dim); white-space: pre-wrap; max-height: 96px; overflow: auto; border: 1px solid var(--border-subtle); border-radius: 4px; padding: 6px; background: var(--surface); }
+    .work-review-card__warning { font-family: var(--font-mono); font-size: 10px; color: #ffb84d; border: 1px solid rgba(255,184,77,0.3); background: rgba(255,184,77,0.08); border-radius: 4px; padding: 6px; }
+    .verification-pill { font-family: var(--font-mono); font-size: 9px; border-radius: 999px; padding: 2px 6px; border: 1px solid var(--border); color: var(--text-muted); }
+    .verification-pill--passed { color: #34c759; border-color: rgba(52,199,89,0.35); background: rgba(52,199,89,0.08); }
+    .verification-pill--failed { color: #ff3b30; border-color: rgba(255,59,48,0.35); background: rgba(255,59,48,0.08); }
+    .work-queue { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; margin-bottom: 12px; }
+    .work-queue__group { background: var(--surface); border: 1px solid var(--border); border-radius: 6px; padding: 8px; min-width: 0; }
+    .work-queue__heading { display: flex; align-items: center; justify-content: space-between; gap: 8px; font-family: var(--font-mono); font-size: 10px; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.06em; margin-bottom: 6px; }
+    .work-queue__count { color: var(--text-dim); }
+    .work-queue__item { border-top: 1px solid var(--border-subtle); padding: 7px 0; display: grid; gap: 4px; }
+    .work-queue__item:first-of-type { border-top: none; }
+    .work-queue__title { font-size: 12px; color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .work-queue__meta { display: flex; flex-wrap: wrap; gap: 6px; font-family: var(--font-mono); font-size: 9px; color: var(--text-muted); }
+    .work-queue__actions { display: flex; gap: 4px; flex-wrap: wrap; }
+    .work-queue__actions button { font-family: var(--font-mono); font-size: 9px; color: var(--text-dim); background: var(--bg); border: 1px solid var(--border); border-radius: 3px; padding: 3px 6px; cursor: pointer; }
+    .work-queue__actions button:hover { color: var(--text); background: var(--surface-raised); }
 
     /* Task create form */
     .task-create { background: var(--surface); border: 1px solid var(--border); border-radius: 6px; padding: 12px; margin-top: 6px; display: flex; flex-direction: column; gap: 10px; animation: slideDown 0.15s ease-out; }
@@ -2291,6 +2377,7 @@ export class DashboardServer {
   <div id="agents-slot"></div>
   <div id="saved-sessions-slot"></div>
   <div id="tasks-slot"></div>
+  <div id="workqueue-slot"></div>
   <div id="directories-slot"></div>
   <div id="launch-slot"></div>
   <div id="calendar-slot"></div>
@@ -2335,6 +2422,7 @@ export class DashboardServer {
     ];
     let cachedDirectories = { projectDirectories: {}, recentDirectories: [], lastLaunchDirectory: null, projectAgentPreferences: {}, lastAgentType: null };
     let cachedTasks = [];
+    let cachedWorkItems = [];
     let cachedTemplates = [];
     let cachedNotifPrefs = { onNeedsInput: true, onFinished: true, onFailed: true };
     let cachedProjects = [];
@@ -2550,12 +2638,126 @@ export class DashboardServer {
       var summary = task.workSummary || {};
       var counts = summary.counts || {};
       var parts = [];
-      ['running', 'claimed', 'queued', 'needs_review', 'blocked', 'failed'].forEach(function(status) {
-        if (counts[status]) {
-          parts.push(counts[status] + ' ' + status.replace(/_/g, ' '));
-        }
-      });
+      if (counts.needs_review) parts.push(counts.needs_review + ' needs review');
+      if (counts.running || counts.claimed) parts.push(((counts.running || 0) + (counts.claimed || 0)) + ' running');
+      if (counts.queued) parts.push(counts.queued + ' queued');
+      if (counts.failed || counts.blocked) parts.push(((counts.failed || 0) + (counts.blocked || 0)) + ' failed');
       return parts.join(' · ');
+    }
+
+    function itemArtifacts(item) {
+      return (item && Array.isArray(item.artifactRefs) ? item.artifactRefs : []).filter(function(a) {
+        return a && typeof a === 'object';
+      });
+    }
+
+    function artifactByType(item, type) {
+      return itemArtifacts(item).find(function(a) { return a.type === type; }) || null;
+    }
+
+    function artifactsByType(item, type) {
+      return itemArtifacts(item).filter(function(a) { return a.type === type; });
+    }
+
+    function latestVerification(item) {
+      var matches = artifactsByType(item, 'verification_result');
+      return matches.length ? matches[matches.length - 1] : null;
+    }
+
+    function changedFiles(item) {
+      var changed = artifactByType(item, 'changed_files');
+      return changed && Array.isArray(changed.files) ? changed.files : [];
+    }
+
+    function diffSummary(item) {
+      var diff = artifactByType(item, 'git_diff_summary');
+      return diff && typeof diff.summary === 'string' ? diff.summary : '';
+    }
+
+    function workItemBranch(item) {
+      var branch = artifactByType(item, 'branch');
+      return branch && branch.name ? String(branch.name) : '';
+    }
+
+    function workItemWorktree(item) {
+      var worktree = artifactByType(item, 'worktree');
+      return worktree && worktree.path ? String(worktree.path) : '';
+    }
+
+    function workItemBaseRevision(item) {
+      var base = artifactByType(item, 'base_revision');
+      return base && base.sha ? String(base.sha) : '';
+    }
+
+    function verificationPill(item) {
+      var verification = latestVerification(item);
+      if (!verification) return '<span class="verification-pill">not checked</span>';
+      var status = verification.aggregateStatus === 'passed' ? 'passed' : 'failed';
+      return '<span class="verification-pill verification-pill--' + esc(status) + '">' + esc(status) + '</span>';
+    }
+
+    function hasSensitivePath(item) {
+      return changedFiles(item).some(function(file) {
+        var path = String(file.path || file);
+        return path === 'cloudbuild.yaml'
+          || path.indexOf('Dockerfile') === 0
+          || path.indexOf('infra/') === 0
+          || path.indexOf('terraform/') === 0
+          || path.indexOf('firebase/') === 0
+          || path.indexOf('gcp/') === 0
+          || path.indexOf('src/services/orchestrator/') === 0
+          || path.indexOf('src/services/operator') === 0
+          || path.indexOf('src/services/tools/domains/') === 0
+          || path === 'src/services/workspaceContextService.ts';
+      });
+    }
+
+    function renderWorkItemReviewPanel(item) {
+      var alias = item.assignedAliasDisplayName || item.assignedAlias || 'unassigned';
+      var branch = workItemBranch(item);
+      var worktree = workItemWorktree(item);
+      var base = workItemBaseRevision(item);
+      var files = changedFiles(item);
+      var diff = diffSummary(item);
+      var verification = latestVerification(item);
+      var verifyFailed = verification && verification.aggregateStatus !== 'passed';
+      var sensitive = hasSensitivePath(item);
+      var html = '<div class="work-review-card">'
+        + '<div class="work-review-card__title"><strong>' + esc(item.title || item.id) + '</strong>' + verificationPill(item) + '</div>'
+        + '<div class="work-review-card__grid">'
+        + '<div class="work-review-card__field"><strong>Status</strong> ' + esc(item.status || 'unknown') + '</div>'
+        + '<div class="work-review-card__field"><strong>Alias</strong> ' + esc(alias) + '</div>'
+        + '<div class="work-review-card__field"><strong>Updated</strong> ' + esc(item.updatedAt ? elapsed(item.updatedAt) : 'unknown') + '</div>'
+        + '<div class="work-review-card__field"><strong>Branch</strong> ' + esc(branch || 'none') + '</div>'
+        + '<div class="work-review-card__field"><strong>Worktree</strong> ' + esc(worktree ? baseName(worktree) : 'none') + '</div>'
+        + '<div class="work-review-card__field"><strong>Base</strong> ' + esc(base || 'none') + '</div>'
+        + '</div>';
+      if (files.length) {
+        html += '<div class="work-review-card__files">';
+        files.slice(0, 12).forEach(function(file) {
+          html += '<span class="work-review-card__file">' + esc(file.path || file) + '</span>';
+        });
+        if (files.length > 12) html += '<span class="work-review-card__file">+' + (files.length - 12) + ' more</span>';
+        html += '</div>';
+      }
+      if (diff) {
+        html += '<div class="work-review-card__diff">' + esc(diff) + '</div>';
+      }
+      if (sensitive) {
+        html += '<div class="work-review-card__warning">Sensitive path touched. Review before approving.</div>';
+      }
+      if (verifyFailed) {
+        html += '<div class="work-review-card__warning">Latest checks failed. Approve only if this is intentional.</div>';
+      }
+      html += '<div class="work-item-row__actions">'
+        + '<button onclick="event.stopPropagation();runWorkItemChecks(&#39;' + esc(item.id) + '&#39;, false)">Run checks</button>'
+        + '<button onclick="event.stopPropagation();runWorkItemChecks(&#39;' + esc(item.id) + '&#39;, true)">Rerun failed</button>'
+        + '<button onclick="event.stopPropagation();reviewWorkItem(&#39;' + esc(item.id) + '&#39;, &#39;' + (verifyFailed || sensitive ? 'approve-anyway' : 'approve') + '&#39;)">' + (verifyFailed || sensitive ? 'Approve anyway' : 'Approve') + '</button>'
+        + '<button onclick="event.stopPropagation();reviewWorkItem(&#39;' + esc(item.id) + '&#39;, &#39;changes-with-output&#39;)">Request changes</button>'
+        + '<button onclick="event.stopPropagation();reviewWorkItem(&#39;' + esc(item.id) + '&#39;, &#39;dismiss&#39;)">Dismiss</button>'
+        + '</div>'
+        + '</div>';
+      return html;
     }
 
     function isDefaultActionableTask(task) {
@@ -2880,6 +3082,93 @@ export class DashboardServer {
       document.getElementById('launch-slot').innerHTML = html;
     }
 
+    function workQueueGroups(items) {
+      var groups = {
+        queued: [],
+        running: [],
+        needs_review: [],
+        failed: [],
+        done: [],
+        cancelled: [],
+      };
+      (items || []).forEach(function(item) {
+        if (item.status === 'claimed' || item.status === 'running') groups.running.push(item);
+        else if (item.status === 'blocked' || item.status === 'failed') groups.failed.push(item);
+        else if (item.status === 'done') groups.done.push(item);
+        else if (item.status === 'cancelled') groups.cancelled.push(item);
+        else if (item.status === 'needs_review') groups.needs_review.push(item);
+        else groups.queued.push(item);
+      });
+      return groups;
+    }
+
+    function taskTitleForWorkItem(item) {
+      if (!item.taskId) return 'No task';
+      var task = (cachedTasks || []).find(function(t) { return t.id === item.taskId; });
+      return task ? task.title : item.taskId;
+    }
+
+    function renderWorkQueue(items) {
+      const slot = document.getElementById('workqueue-slot');
+      if (!slot) return;
+      const groups = workQueueGroups(items || []);
+      var ordered = [
+        ['needs_review', 'Needs Review'],
+        ['running', 'Running'],
+        ['queued', 'Queued'],
+        ['failed', 'Failed'],
+        ['done', 'Done'],
+        ['cancelled', 'Cancelled'],
+      ];
+      var activeCount = ordered.reduce(function(sum, pair) {
+        return sum + (groups[pair[0]] || []).length;
+      }, 0);
+      if (!activeCount) {
+        slot.innerHTML = '';
+        return;
+      }
+      let html = '<div class="section-label">Work Queue</div><div class="work-queue">';
+      ordered.forEach(function(pair) {
+        var status = pair[0];
+        var label = pair[1];
+        var groupItems = groups[status] || [];
+        html += '<div class="work-queue__group">'
+          + '<div class="work-queue__heading"><span>' + esc(label) + '</span><span class="work-queue__count">' + groupItems.length + '</span></div>';
+        if (!groupItems.length) {
+          html += '<div class="dim">Empty</div>';
+        } else {
+          groupItems.slice(0, 8).forEach(function(item) {
+            var alias = item.assignedAliasDisplayName || item.assignedAlias || 'unassigned';
+            var branch = workItemBranch(item);
+            var worktree = workItemWorktree(item);
+            var base = workItemBaseRevision(item);
+            var changedCount = changedFiles(item).length;
+            html += '<div class="work-queue__item">'
+              + '<div class="work-queue__title">' + esc(item.title || item.id) + '</div>'
+              + '<div class="work-queue__meta">'
+              + '<span>' + esc(taskTitleForWorkItem(item)) + '</span>'
+              + '<span>' + esc(alias) + '</span>'
+              + '<span>' + esc(item.status || 'unknown') + '</span>'
+              + (branch ? '<span>' + esc(branch) + '</span>' : '')
+              + (worktree ? '<span>' + esc(baseName(worktree)) + '</span>' : '')
+              + (base ? '<span>' + esc(base.slice(0, 8)) + '</span>' : '')
+              + (changedCount ? '<span>' + changedCount + ' changed</span>' : '')
+              + '<span>' + esc(item.updatedAt ? elapsed(item.updatedAt) : 'unknown') + '</span>'
+              + '</div>';
+            if (item.status === 'needs_review') {
+              html += renderWorkItemReviewPanel(item);
+            } else if (item.status === 'queued' || item.status === 'claimed') {
+              html += '<div class="work-queue__actions"><button onclick="dispatchWorkItem(&#39;' + esc(item.id) + '&#39;, &#39;' + esc(item.assignedAlias || 'codex') + '&#39;)">Start</button></div>';
+            }
+            html += '</div>';
+          });
+        }
+        html += '</div>';
+      });
+      html += '</div>';
+      slot.innerHTML = html;
+    }
+
     function renderTaskExpansion(taskId) {
       const detail = taskDetailsCache[taskId];
       if (!detail) return '<div class="task-expand"><span class="dim">Loading...</span></div>';
@@ -2907,28 +3196,31 @@ export class DashboardServer {
         html += '<div class="task-expand__field"><div class="task-expand__label">Agent Work</div><div class="task-expand__criteria">';
         for (const item of workItems) {
           const alias = item.assignedAliasDisplayName || item.assignedAlias || 'unassigned';
-          const artifacts = item.artifactRefs || [];
-          const branchArtifact = artifacts.find(function(a) { return a && a.type === 'branch'; });
-          const worktreeArtifact = artifacts.find(function(a) { return a && a.type === 'worktree'; });
-          const changedArtifact = artifacts.find(function(a) { return a && a.type === 'changed_files'; });
-          const branch = branchArtifact && branchArtifact.name ? branchArtifact.name : '';
-          const worktree = worktreeArtifact && worktreeArtifact.path ? baseName(worktreeArtifact.path) : '';
-          const changedCount = changedArtifact && changedArtifact.files ? changedArtifact.files.length : 0;
+          const branch = workItemBranch(item);
+          const worktree = workItemWorktree(item);
+          const base = workItemBaseRevision(item);
+          const changedCount = changedFiles(item).length;
           html += '<div class="task-expand__value work-item-row">'
             + '<div class="work-item-row__meta"><strong>' + esc(item.status || 'unknown') + '</strong>'
             + ' · ' + esc(alias)
             + (branch ? ' · ' + esc(branch) : '')
-            + (worktree ? ' · ' + esc(worktree) : '')
+            + (worktree ? ' · ' + esc(baseName(worktree)) : '')
+            + (base ? ' · base ' + esc(base.slice(0, 8)) : '')
             + (changedCount ? ' · ' + changedCount + ' changed' : '')
+            + ' · ' + (item.updatedAt ? esc(elapsed(item.updatedAt)) : 'unknown')
             + '</div>';
           if (item.status === 'needs_review') {
             html += '<div class="work-item-row__actions">'
+              + '<button onclick="event.stopPropagation();runWorkItemChecks(&#39;' + esc(item.id) + '&#39;, false)">Run checks</button>'
               + '<button onclick="event.stopPropagation();reviewWorkItem(&#39;' + esc(item.id) + '&#39;, &#39;approve&#39;)">Approve</button>'
               + '<button onclick="event.stopPropagation();reviewWorkItem(&#39;' + esc(item.id) + '&#39;, &#39;changes&#39;)">Changes</button>'
               + '<button onclick="event.stopPropagation();reviewWorkItem(&#39;' + esc(item.id) + '&#39;, &#39;dismiss&#39;)">Dismiss</button>'
               + '</div>';
           }
           html += '</div>';
+          if (item.status === 'needs_review') {
+            html += renderWorkItemReviewPanel(item);
+          }
         }
         html += '</div></div>';
       }
@@ -3239,6 +3531,20 @@ export class DashboardServer {
       if (r.error) alert(r.error);
       else requestDashboardRefresh('mutation');
     }
+    async function dispatchWorkItem(workItemId, agentType) {
+      const r = await postJSON('/api/work-items/dispatch', { workItemId, agentType: agentType || 'codex' });
+      if (r.error) alert(r.error);
+      else requestDashboardRefresh('mutation');
+    }
+    async function runWorkItemChecks(workItemId, rerunFailed) {
+      const action = rerunFailed ? 'rerun-failed-checks' : 'run-checks';
+      const r = await postJSON('/api/work-items/' + encodeURIComponent(workItemId) + '/' + action, {});
+      if (r.error) alert(r.error);
+      else {
+        Object.keys(taskDetailsCache).forEach(function(key) { delete taskDetailsCache[key]; });
+        requestDashboardRefresh('mutation');
+      }
+    }
     async function reviewWorkItem(workItemId, action) {
       const r = await postJSON('/api/work-items/' + encodeURIComponent(workItemId) + '/' + encodeURIComponent(action), {});
       if (r.error) alert(r.error);
@@ -3327,17 +3633,19 @@ export class DashboardServer {
     async function runDashboardPoll() {
       try {
         await loadTaskFeed();
-        const [statusRes, calRes, notifRes, projRes] = await Promise.all([
+        const [statusRes, calRes, notifRes, projRes, workQueueRes] = await Promise.all([
           fetch('/api/status').then(r => r.json()),
           fetch('/api/calendar').then(r => r.json()),
           fetch('/api/notifications').then(r => r.json()),
           fetch('/api/projects').then(r => r.json()),
+          fetch('/api/work-items?limit=200').then(r => r.json()),
         ]);
         cachedTemplates = statusRes.templates || cachedTemplates;
         cachedDirectories = statusRes.directories || cachedDirectories;
         cachedNotifPrefs = notifRes || cachedNotifPrefs;
         cachedProjects = projRes.projects || cachedProjects;
         cachedSavedSessions = statusRes.savedSessions || cachedSavedSessions;
+        cachedWorkItems = workQueueRes.workItems || cachedWorkItems;
 
         if (shouldRenderSection('auth', statusRes.auth || null)) {
           renderAuth(statusRes.auth);
@@ -3370,6 +3678,12 @@ export class DashboardServer {
           })
         ) {
           renderTasks(cachedTasks, cachedTemplates);
+        }
+        if (shouldRenderSection('workQueue', {
+          items: cachedWorkItems,
+          taskNames: (cachedTasks || []).map(function(task) { return { id: task.id, title: task.title }; }),
+        })) {
+          renderWorkQueue(cachedWorkItems);
         }
         if (shouldRenderSection('directories', cachedDirectories)) {
           renderDirectories();
