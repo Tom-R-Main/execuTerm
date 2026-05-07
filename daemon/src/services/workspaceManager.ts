@@ -8,6 +8,7 @@ import type {
   LocalWorkspace,
   ResumeCapability,
   SavedResumableSession,
+  SourceControlState,
   WorkspaceTemplate,
 } from '../types.js';
 import { readDaemonConfig, writeDaemonState } from '../config.js';
@@ -141,6 +142,10 @@ export class WorkspaceManager {
     templateId: string,
     opts?: {
       taskId?: string;
+      workItemId?: string;
+      claimToken?: string;
+      claimOwner?: string;
+      assignedAlias?: string;
       projectId?: string;
       title?: string;
       cwd?: string;
@@ -151,6 +156,7 @@ export class WorkspaceManager {
       checkpointStatus?: LocalWorkspace['checkpointStatus'];
       checkpointedAt?: string;
       attachedContextItems?: AttachedContextItem[];
+      sourceControl?: SourceControlState;
     }
   ): Promise<string> {
     const template = this.getTemplate(templateId);
@@ -253,6 +259,10 @@ export class WorkspaceManager {
       kind: template.kind,
       agentType: template.agentType,
       taskId: opts?.taskId,
+      workItemId: opts?.workItemId,
+      claimToken: opts?.claimToken,
+      claimOwner: opts?.claimOwner,
+      assignedAlias: opts?.assignedAlias,
       projectId: opts?.projectId,
       surfaceId,
       state: 'starting',
@@ -265,6 +275,7 @@ export class WorkspaceManager {
       attachedContextItems: this.normalizeAttachedContextItems(
         opts?.attachedContextItems || []
       ),
+      sourceControl: opts?.sourceControl,
     };
 
     this.state.workspaces[workspaceId] = workspace;

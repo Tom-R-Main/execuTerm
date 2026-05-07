@@ -142,6 +142,64 @@ describe('WorkspaceManager.createFromTemplate', () => {
     }
   });
 
+  it('persists source-control metadata on created workspaces', async () => {
+    const configDir = mkdtempSync(join(tmpdir(), 'exf-workspace-manager-'));
+    process.env.EXF_CONFIG_DIR = configDir;
+
+    try {
+      const state: DaemonState = {
+        workspaces: {},
+        savedSessions: {},
+        hookServerPort: 0,
+        lastSync: '2026-03-18T00:00:00.000Z',
+      };
+      const cmux = {
+        workspaceCreate: jest.fn(async () => makeWorkspaceCreateResult('ws-1')),
+        workspaceRename: jest.fn(async () => {}),
+        surfaceList: jest.fn(async () => makeSurfaceListResult('ws-1', 'surface-1')),
+        setStatus: jest.fn(async () => ''),
+        surfaceSendText: jest.fn(async () => {}),
+      };
+
+      const manager = new WorkspaceManager(cmux as any, state);
+      await manager.createFromTemplate('codex', {
+        cwd: '/Users/thomasmain/.execufunction/worktrees/execufunction/ws-1',
+        workItemId: 'work-1',
+        claimToken: 'claim-token-1',
+        claimOwner: 'executerm:codex',
+        assignedAlias: 'codex',
+        sourceControl: {
+          mode: 'git-worktree',
+          repoRoot: '/Users/thomasmain/projects/execufunction',
+          coordinatorRoot: '/Users/thomasmain/projects/execufunction',
+          worktreePath:
+            '/Users/thomasmain/.execufunction/worktrees/execufunction/ws-1',
+          baseRevision: 'abc123',
+          branchName: 'exf/agent/task-1/ws-1',
+          mergeStatus: 'none',
+        },
+      });
+
+      expect(state.workspaces['ws-1']?.sourceControl).toEqual(
+        expect.objectContaining({
+          mode: 'git-worktree',
+          branchName: 'exf/agent/task-1/ws-1',
+          mergeStatus: 'none',
+        })
+      );
+      expect(state.workspaces['ws-1']).toEqual(
+        expect.objectContaining({
+          workItemId: 'work-1',
+          claimToken: 'claim-token-1',
+          claimOwner: 'executerm:codex',
+          assignedAlias: 'codex',
+        })
+      );
+    } finally {
+      rmSync(configDir, { recursive: true, force: true });
+    }
+  });
+
   it('starts dev-server templates by sending their command to the new surface', async () => {
     const configDir = mkdtempSync(join(tmpdir(), 'exf-workspace-manager-'));
     process.env.EXF_CONFIG_DIR = configDir;

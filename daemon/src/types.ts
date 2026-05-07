@@ -16,17 +16,44 @@ export type ResumeCapability = 'claude' | 'codex' | 'none';
 export type CheckpointStatus = 'idle' | 'pending' | 'saved' | 'failed';
 export type ContextSourceType = 'note' | 'memory' | 'task' | 'file';
 export type DashboardRefreshMode = 'timed' | 'manual';
+export type SourceControlMode =
+  | 'none'
+  | 'git-worktree'
+  | 'jj-coordinator'
+  | 'jj-workspace-experimental';
+export type MergeStatus =
+  | 'none'
+  | 'candidate'
+  | 'clean'
+  | 'conflicted'
+  | 'failed'
+  | 'landed'
+  | 'dismissed';
 
-// Maps local agent type to ExecuFunction task executorAgent enum
-export type TaskExecutorAgent = 'claude_code' | 'codex' | 'gemini';
+export type AgentWorkStatus =
+  | 'queued'
+  | 'claimed'
+  | 'running'
+  | 'blocked'
+  | 'needs_review'
+  | 'done'
+  | 'failed'
+  | 'cancelled';
 
-export function toTaskExecutorAgent(agent: AgentType): TaskExecutorAgent {
-  const map: Record<AgentType, TaskExecutorAgent> = {
-    'claude-code': 'claude_code',
-    codex: 'codex',
-    gemini: 'gemini',
-  };
-  return map[agent];
+export interface AgentWorkItem {
+  id: string;
+  taskId?: string | null;
+  projectId?: string | null;
+  title: string;
+  status: AgentWorkStatus;
+  assignedAlias?: string | null;
+  assignedAliasDisplayName?: string | null;
+  assignedAliasAgentType?: string | null;
+  claimOwner?: string | null;
+  claimToken?: string | null;
+  claimExpiresAt?: string | null;
+  artifactRefs?: unknown[];
+  updatedAt?: string;
 }
 
 // cmux v2 response shapes (match real protocol)
@@ -92,6 +119,10 @@ export interface LocalWorkspace {
   kind: WorkspaceKind;
   agentType?: AgentType;
   taskId?: string;
+  workItemId?: string;
+  claimToken?: string;
+  claimOwner?: string;
+  assignedAlias?: string;
   projectId?: string;
   surfaceId?: string;
   state: SessionState;
@@ -102,6 +133,21 @@ export interface LocalWorkspace {
   checkpointStatus?: CheckpointStatus;
   checkpointedAt?: string;
   attachedContextItems?: AttachedContextItem[];
+  sourceControl?: SourceControlState;
+}
+
+export interface SourceControlState {
+  mode: SourceControlMode;
+  repoRoot: string;
+  coordinatorRoot?: string;
+  worktreePath?: string;
+  baseRevision?: string;
+  branchName?: string;
+  jjChangeId?: string;
+  opIdBefore?: string;
+  opIdAfter?: string;
+  mergeStatus?: MergeStatus;
+  lastSnapshotAt?: string;
 }
 
 export interface AttachedContextItem {
@@ -123,6 +169,10 @@ export interface SavedResumableSession {
   cwd: string;
   agentType: AgentType;
   taskId?: string;
+  workItemId?: string;
+  claimToken?: string;
+  claimOwner?: string;
+  assignedAlias?: string;
   projectId?: string;
   resumeId: string;
   resumeCommand: string;
@@ -130,6 +180,7 @@ export interface SavedResumableSession {
   checkpointStatus: 'saved';
   checkpointedAt: string;
   attachedContextItems?: AttachedContextItem[];
+  sourceControl?: SourceControlState;
 }
 
 export interface NotificationPreferences {
@@ -145,6 +196,29 @@ export interface ToolAugmentConfig {
   maxSemanticResults: number;
   minQueryLength: number;
   repositoryId?: string;
+}
+
+export interface VcsConfig {
+  enabled: boolean;
+  worktreeRoot: string;
+  jjEnabled: boolean;
+  autoCreateWorktree: boolean;
+  autoMerge: boolean;
+  allowPush: boolean;
+}
+
+export interface SourceControlStatus {
+  cwd: string;
+  isGitRepo: boolean;
+  repoRoot?: string;
+  branchName?: string;
+  headRevision?: string;
+  isDirty?: boolean;
+  isWorktree?: boolean;
+  jjColocated?: boolean;
+  jjAvailable?: boolean;
+  jjRoot?: string;
+  error?: string;
 }
 
 export interface AugmentLogEntry {
@@ -175,6 +249,7 @@ export interface DaemonConfig {
   launchFailureTimeoutMs?: number;
   notifications?: NotificationPreferences;
   augment?: ToolAugmentConfig;
+  vcs?: VcsConfig;
 }
 
 export interface DaemonState {
@@ -218,6 +293,10 @@ export interface AgentSession {
   workspaceId: string;
   surfaceId?: string;
   taskId?: string;
+  workItemId?: string;
+  claimToken?: string;
+  claimOwner?: string;
+  assignedAlias?: string;
   agentType: AgentType;
   state: SessionState;
   startedAt: string;

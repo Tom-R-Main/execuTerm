@@ -58,7 +58,42 @@ function makeWorkspaceManager(overrides?: Record<string, unknown>) {
   };
 }
 
+function makeExfClient(overrides?: Record<string, unknown>) {
+  return {
+    updateTask: jest.fn(async () => {}),
+    heartbeatWorkItem: jest.fn(async () => {}),
+    markWorkItemNeedsReview: jest.fn(async () => {}),
+    failWorkItem: jest.fn(async () => {}),
+    releaseWorkItem: jest.fn(async () => {}),
+    ...overrides,
+  };
+}
+
 describe('AgentManager.stop', () => {
+  it('does not write task executorAgent when registering an agent session', () => {
+    const cmux = {
+      setStatus: jest.fn(async () => ''),
+      notificationCreate: jest.fn(async () => {}),
+    };
+    const exfClient = makeExfClient();
+
+    const manager = new AgentManager(
+      cmux as any,
+      exfClient as any,
+      makeWorkspaceManager() as any
+    );
+    manager.register({
+      workspaceId: 'ws-1',
+      taskId: 'task-1',
+      agentType: 'codex',
+      state: 'running',
+      startedAt: '2026-03-18T00:00:00.000Z',
+      lastStateChange: '2026-03-18T00:00:00.000Z',
+    });
+
+    expect(exfClient.updateTask).not.toHaveBeenCalled();
+  });
+
   it('sends ctrl-c to the agent surface and marks the session stopped', async () => {
     const cmux = {
       surfaceList: jest.fn(async () => makeSurfaceListResult('surface-1')),
@@ -66,9 +101,7 @@ describe('AgentManager.stop', () => {
       setStatus: jest.fn(async () => ''),
       notificationCreate: jest.fn(async () => {}),
     };
-    const exfClient = {
-      updateTask: jest.fn(async () => {}),
-    };
+    const exfClient = makeExfClient();
 
     const manager = new AgentManager(
       cmux as any,
@@ -97,9 +130,7 @@ describe('AgentManager.stop', () => {
       setStatus: jest.fn(async () => ''),
       notificationCreate: jest.fn(async () => {}),
     };
-    const exfClient = {
-      updateTask: jest.fn(async () => {}),
-    };
+    const exfClient = makeExfClient();
 
     const manager = new AgentManager(
       cmux as any,
@@ -123,6 +154,203 @@ describe('AgentManager.stop', () => {
   });
 });
 
+describe('AgentManager work item lifecycle', () => {
+  it('marks a claimed work item needs_review with source-control artifacts', async () => {
+    const cmux = {
+      setStatus: jest.fn(async () => ''),
+      notificationCreate: jest.fn(async () => {}),
+    };
+    const exfClient = makeExfClient();
+    const workspaceManager = makeWorkspaceManager({
+      getWorkspace: jest.fn(() => ({
+        id: 'ws-review',
+        title: 'Review',
+        cwd: '/repo/worktree',
+        kind: 'agent',
+        agentType: 'codex',
+        workItemId: 'work-1',
+        claimToken: 'claim-token-1',
+        claimOwner: 'executerm:codex',
+        assignedAlias: 'codex',
+        state: 'running',
+        sourceControl: {
+          mode: 'git-worktree',
+          repoRoot: '/repo/main',
+          worktreePath: '/repo/worktree',
+          baseRevision: 'abc123',
+          branchName: 'exf/agent/work-1/ws-review',
+        },
+      })),
+    });
+
+    const manager = new AgentManager(
+      cmux as any,
+      exfClient as any,
+      workspaceManager as any
+    );
+    manager.register({
+      workspaceId: 'ws-review',
+      workItemId: 'work-1',
+      claimToken: 'claim-token-1',
+      claimOwner: 'executerm:codex',
+      assignedAlias: 'codex',
+      agentType: 'codex',
+      state: 'running',
+      startedAt: '2026-03-18T00:00:00.000Z',
+      lastStateChange: '2026-03-18T00:00:00.000Z',
+    });
+
+    await manager.transition('ws-review', 'review_ready');
+
+    expect(exfClient.markWorkItemNeedsReview).toHaveBeenCalledWith(
+      'work-1',
+      expect.objectContaining({
+        claimOwner: 'executerm:codex',
+        claimToken: 'claim-token-1',
+        artifactRefs: expect.arrayContaining([
+          { type: 'branch', name: 'exf/agent/work-1/ws-review' },
+          { type: 'worktree', path: '/repo/worktree' },
+          { type: 'base_revision', sha: 'abc123' },
+        ]),
+      })
+    );
+  });
+
+  it('enriches review artifacts with changed files from the worktree', async () => {
+    const cmux = {
+      setStatus: jest.fn(async () => ''),
+      notificationCreate: jest.fn(async () => {}),
+    };
+    const exfClient = makeExfClient();
+    const workspaceManager = makeWorkspaceManager({
+      getWorkspace: jest.fn(() => ({
+        id: 'ws-review',
+        agentType: 'codex',
+        workItemId: 'work-1',
+        claimToken: 'claim-token-1',
+        claimOwner: 'executerm:codex',
+        assignedAlias: 'codex',
+        state: 'running',
+        sourceControl: {
+          mode: 'git-worktree',
+          repoRoot: '/repo/main',
+          worktreePath: '/repo/worktree',
+          baseRevision: 'abc123',
+          branchName: 'exf/agent/work-1/ws-review',
+        },
+      })),
+    });
+    const gitArtifactService = {
+      collectChangedFiles: jest.fn(async () => [
+        {
+          type: 'changed_files',
+          files: [{ path: 'daemon/src/index.ts', status: 'M' }],
+        },
+      ]),
+    };
+
+    const manager = new AgentManager(
+      cmux as any,
+      exfClient as any,
+      workspaceManager as any,
+      20000,
+      gitArtifactService as any
+    );
+    manager.register({
+      workspaceId: 'ws-review',
+      workItemId: 'work-1',
+      claimToken: 'claim-token-1',
+      claimOwner: 'executerm:codex',
+      assignedAlias: 'codex',
+      agentType: 'codex',
+      state: 'running',
+      startedAt: '2026-03-18T00:00:00.000Z',
+      lastStateChange: '2026-03-18T00:00:00.000Z',
+    });
+
+    await manager.transition('ws-review', 'review_ready');
+
+    expect(gitArtifactService.collectChangedFiles).toHaveBeenCalledWith('/repo/worktree');
+    expect(exfClient.markWorkItemNeedsReview).toHaveBeenCalledWith(
+      'work-1',
+      expect.objectContaining({
+        artifactRefs: expect.arrayContaining([
+          {
+            type: 'changed_files',
+            files: [{ path: 'daemon/src/index.ts', status: 'M' }],
+          },
+        ]),
+      })
+    );
+  });
+
+  it('fails a work item when startup fails', async () => {
+    const cmux = {
+      surfaceList: jest.fn(async () => makeSurfaceListResult('surface-1')),
+      setStatus: jest.fn(async () => ''),
+      notificationCreate: jest.fn(async () => {}),
+    };
+    const exfClient = makeExfClient();
+    const manager = new AgentManager(
+      cmux as any,
+      exfClient as any,
+      makeWorkspaceManager() as any,
+      50
+    );
+    manager.register({
+      workspaceId: 'ws-fail',
+      workItemId: 'work-fail',
+      claimToken: 'claim-token-fail',
+      claimOwner: 'executerm:claude-code',
+      agentType: 'claude-code',
+      state: 'starting',
+      startedAt: '2026-03-18T00:00:00.000Z',
+      lastStateChange: '2026-03-18T00:00:00.000Z',
+    });
+
+    await (manager as any).failStartupSession('ws-fail', 'boom');
+
+    expect(exfClient.failWorkItem).toHaveBeenCalledWith(
+      'work-fail',
+      expect.objectContaining({
+        claimToken: 'claim-token-fail',
+        failureReason: expect.stringContaining('boom'),
+      })
+    );
+  });
+
+  it('releases a work item when a running session is manually stopped before review', async () => {
+    const cmux = {
+      surfaceSendText: jest.fn(async () => {}),
+      setStatus: jest.fn(async () => ''),
+      notificationCreate: jest.fn(async () => {}),
+    };
+    const exfClient = makeExfClient();
+    const manager = new AgentManager(
+      cmux as any,
+      exfClient as any,
+      makeWorkspaceManager() as any
+    );
+    manager.register({
+      workspaceId: 'ws-stop',
+      surfaceId: 'surface-1',
+      workItemId: 'work-stop',
+      claimToken: 'claim-token-stop',
+      claimOwner: 'executerm:codex',
+      agentType: 'codex',
+      state: 'running',
+      startedAt: '2026-03-18T00:00:00.000Z',
+      lastStateChange: '2026-03-18T00:00:00.000Z',
+    });
+
+    await manager.stop('ws-stop');
+
+    expect(exfClient.releaseWorkItem).toHaveBeenCalledWith('work-stop', {
+      claimToken: 'claim-token-stop',
+    });
+  });
+});
+
 describe('AgentManager launch timeout', () => {
   beforeEach(() => {
     jest.useFakeTimers();
@@ -137,9 +365,7 @@ describe('AgentManager launch timeout', () => {
       setStatus: jest.fn(async () => ''),
       notificationCreate: jest.fn(async () => {}),
     };
-    const exfClient = {
-      updateTask: jest.fn(async () => {}),
-    };
+    const exfClient = makeExfClient();
 
     const manager = new AgentManager(
       cmux as any,
@@ -288,9 +514,7 @@ describe('AgentManager resumable sessions', () => {
       setStatus: jest.fn(async () => ''),
       notificationCreate: jest.fn(async () => {}),
     };
-    const exfClient = {
-      updateTask: jest.fn(async () => {}),
-    };
+    const exfClient = makeExfClient();
 
     const manager = new AgentManager(
       cmux as any,
@@ -323,6 +547,10 @@ describe('AgentManager resumable sessions', () => {
         kind: 'agent',
         agentType: 'claude-code',
         taskId: 'task-1',
+        workItemId: 'work-restore',
+        claimToken: 'claim-token-restore',
+        claimOwner: 'executerm:claude-code',
+        assignedAlias: 'claude-code',
         projectId: 'project-1',
         surfaceId: 'surface-1',
         resumeId: 'c7e90bfa-c682-4867-964e-c2f6532b228e',
@@ -347,9 +575,7 @@ describe('AgentManager resumable sessions', () => {
       setStatus: jest.fn(async () => ''),
       notificationCreate: jest.fn(async () => {}),
     };
-    const exfClient = {
-      updateTask: jest.fn(async () => {}),
-    };
+    const exfClient = makeExfClient();
 
     const manager = new AgentManager(
       cmux as any,
@@ -438,6 +664,10 @@ describe('AgentManager resumable sessions', () => {
         cwd: '/Users/thomasmain/projects/execufunction',
         agentType: 'claude-code',
         taskId: 'task-1',
+        workItemId: 'work-restore',
+        claimToken: 'claim-token-restore',
+        claimOwner: 'executerm:claude-code',
+        assignedAlias: 'claude-code',
         projectId: 'project-1',
         resumeId: 'c7e90bfa-c682-4867-964e-c2f6532b228e',
         resumeCommand: 'claude --resume c7e90bfa-c682-4867-964e-c2f6532b228e',
@@ -481,10 +711,14 @@ describe('AgentManager resumable sessions', () => {
           'EXECUTERM_MANAGED_AGENT=1 claude --resume c7e90bfa-c682-4867-964e-c2f6532b228e',
         attachedContextItems: [
           expect.objectContaining({
-            id: 'note-1',
+          id: 'note-1',
             sourceType: 'note',
           }),
         ],
+        workItemId: 'work-restore',
+        claimToken: 'claim-token-restore',
+        claimOwner: 'executerm:claude-code',
+        assignedAlias: 'claude-code',
       })
     );
     expect(workspaceManager.removeSavedResumableSession).toHaveBeenCalledWith(

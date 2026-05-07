@@ -5,11 +5,18 @@ import type {
   NotificationPreferences,
   SavedResumableSession,
   SessionState,
+  SourceControlState,
 } from '../types.js';
-import { toTaskExecutorAgent } from '../types.js';
 import type { ExfClient } from '../exfClient.js';
 import { readDaemonConfig, DEFAULT_NOTIFICATION_PREFS } from '../config.js';
 import type { WorkspaceManager } from './workspaceManager.js';
+import { GitArtifactService } from './vcs/gitArtifactService.js';
+import { TraceRecorder } from './observability/traceRecorder.js';
+import {
+  RuntimeReceiptBus,
+  type RuntimeReceipt,
+  type RuntimeReceiptType,
+} from './runtimeReceiptBus.js';
 
 type StateChangeHandler = (session: AgentSession, prev: SessionState) => void;
 
@@ -47,6 +54,21 @@ const VALID_TRANSITIONS: Record<SessionState, SessionState[]> = {
   stopped: [],
 };
 
+function buildWorkArtifacts(sourceControl?: SourceControlState): unknown[] {
+  if (!sourceControl) return [];
+  const artifacts: unknown[] = [];
+  if (sourceControl.branchName) {
+    artifacts.push({ type: 'branch', name: sourceControl.branchName });
+  }
+  if (sourceControl.worktreePath) {
+    artifacts.push({ type: 'worktree', path: sourceControl.worktreePath });
+  }
+  if (sourceControl.baseRevision) {
+    artifacts.push({ type: 'base_revision', sha: sourceControl.baseRevision });
+  }
+  return artifacts;
+}
+
 export class AgentManager {
   private sessions = new Map<string, AgentSession>();
   private handlers: StateChangeHandler[] = [];
@@ -58,7 +80,10 @@ export class AgentManager {
     private cmux: ExecuTermSocket,
     private exfClient: ExfClient,
     private workspaceManager: WorkspaceManager,
-    private launchFailureTimeoutMs = 20000
+    private launchFailureTimeoutMs = 20000,
+    private gitArtifactService = new GitArtifactService(),
+    private receipts = new RuntimeReceiptBus(),
+    private trace = new TraceRecorder()
   ) {}
 
   register(session: AgentSession): void {
@@ -75,19 +100,40 @@ export class AgentManager {
     if (workspace?.resumeCapability && !session.resumeCapability) {
       session.resumeCapability = workspace.resumeCapability;
     }
+    if (workspace?.workItemId && !session.workItemId) {
+      session.workItemId = workspace.workItemId;
+    }
+    if (workspace?.claimToken && !session.claimToken) {
+      session.claimToken = workspace.claimToken;
+    }
+    if (workspace?.claimOwner && !session.claimOwner) {
+      session.claimOwner = workspace.claimOwner;
+    }
+    if (workspace?.assignedAlias && !session.assignedAlias) {
+      session.assignedAlias = workspace.assignedAlias;
+    }
     this.sessions.set(session.workspaceId, session);
+    this.trace.record({
+      name: 'agent.register',
+      attributes: {
+        workspaceId: session.workspaceId,
+        taskId: session.taskId,
+        workItemId: session.workItemId,
+        agentType: session.agentType,
+        state: session.state,
+      },
+      outcome: 'success',
+    });
+    this.receipts.publish({
+      type: 'agent.registered',
+      workspaceId: session.workspaceId,
+      taskId: session.taskId,
+      workItemId: session.workItemId,
+      agentType: session.agentType,
+    });
     this.updateSidebar(session);
     this.scheduleLaunchTimeout(session);
     this.scheduleBootstrapReady(session);
-
-    // Set executorAgent on task using the correct backend enum value
-    if (session.taskId) {
-      this.exfClient
-        .updateTask(session.taskId, {
-          executorAgent: toTaskExecutorAgent(session.agentType),
-        })
-        .catch(() => {});
-    }
   }
 
   async stop(workspaceId: string): Promise<void> {
@@ -131,6 +177,10 @@ export class AgentManager {
       this.clearLaunchTimeout(workspaceId);
       this.clearBootstrapReady(workspaceId);
     }
+    this.workspaceManager.updateWorkspace(workspaceId, {
+      state: newState,
+      lastActivity: session.lastStateChange,
+    });
 
     await this.updateSidebar(session);
 
@@ -160,23 +210,146 @@ export class AgentManager {
           .notificationCreate(`${session.agentType} failed`, error || undefined)
           .catch(() => {});
       }
-      if (session.taskId) {
-        await this.exfClient
-          .updateTask(session.taskId, {
-            phase: 'blocked',
-            blockedReason: error || 'Agent failed',
-          })
-          .catch(() => {});
-      }
     }
+
+    await this.syncWorkItemState(session, prev, error);
+    this.trace.record({
+      name: 'agent.transition',
+      attributes: {
+        workspaceId,
+        taskId: session.taskId,
+        workItemId: session.workItemId,
+        agentType: session.agentType,
+        fromState: prev,
+        toState: newState,
+      },
+      outcome: error ? 'failure' : 'success',
+      error,
+    });
+    this.receipts.publish({
+      type: 'agent.transitioned',
+      workspaceId,
+      taskId: session.taskId,
+      workItemId: session.workItemId,
+      agentType: session.agentType,
+      attributes: {
+        fromState: prev,
+        toState: newState,
+      },
+    });
 
     for (const handler of this.handlers) {
       handler(session, prev);
     }
   }
 
+  private async syncWorkItemState(
+    session: AgentSession,
+    prev: SessionState,
+    error?: string
+  ): Promise<void> {
+    const workItemId = session.workItemId;
+    if (!workItemId) return;
+    const claim = {
+      claimOwner: session.claimOwner,
+      claimToken: session.claimToken,
+      leaseSeconds: 3600,
+    };
+    try {
+      if (session.state === 'running' || session.state === 'waiting_input') {
+        await this.exfClient.heartbeatWorkItem(workItemId, claim);
+        this.publishWorkItemSyncReceipt('work_item.heartbeat_synced', session);
+      } else if (session.state === 'review_ready') {
+        const workspace = this.workspaceManager.getWorkspace(session.workspaceId);
+        const artifactRefs = await this.buildReviewArtifacts(workspace?.sourceControl);
+        await this.exfClient.markWorkItemNeedsReview(workItemId, {
+          ...claim,
+          resultSummary: `${session.agentType} session is ready for review in execuTerm.`,
+          artifactRefs,
+        });
+        this.publishWorkItemSyncReceipt('work_item.needs_review_synced', session, {
+          artifactCount: artifactRefs.length,
+        });
+      } else if (session.state === 'failed') {
+        await this.exfClient.failWorkItem(workItemId, {
+          ...claim,
+          failureReason: error || 'Agent failed',
+          resultSummary: error || `${session.agentType} session failed in execuTerm.`,
+        });
+        this.publishWorkItemSyncReceipt('work_item.failed_synced', session, {
+          error: error || 'Agent failed',
+        });
+      } else if (session.state === 'stopped' && prev !== 'review_ready' && prev !== 'failed') {
+        await this.exfClient.releaseWorkItem(workItemId, {
+          claimToken: session.claimToken,
+        });
+        this.publishWorkItemSyncReceipt('work_item.released_synced', session);
+      }
+    } catch {
+      // Work item state is durable backend metadata; local agent control should continue
+      // even if a transient API failure prevents status synchronization.
+    }
+  }
+
+  private publishWorkItemSyncReceipt(
+    type: RuntimeReceiptType,
+    session: AgentSession,
+    attributes?: Record<string, unknown>
+  ): void {
+    this.trace.record({
+      name: type,
+      attributes: {
+        workspaceId: session.workspaceId,
+        taskId: session.taskId,
+        workItemId: session.workItemId,
+        agentType: session.agentType,
+        ...(attributes || {}),
+      },
+      outcome: 'success',
+    });
+    this.receipts.publish({
+      type,
+      workspaceId: session.workspaceId,
+      taskId: session.taskId,
+      workItemId: session.workItemId,
+      agentType: session.agentType,
+      attributes,
+    });
+  }
+
+  private async buildReviewArtifacts(
+    sourceControl?: SourceControlState
+  ): Promise<unknown[]> {
+    const artifacts = buildWorkArtifacts(sourceControl);
+    if (!sourceControl?.worktreePath) {
+      return artifacts;
+    }
+    try {
+      return [
+        ...artifacts,
+        ...(await this.gitArtifactService.collectChangedFiles(
+          sourceControl.worktreePath
+        )),
+      ];
+    } catch {
+      return artifacts;
+    }
+  }
+
   onStateChange(handler: StateChangeHandler): void {
     this.handlers.push(handler);
+  }
+
+  waitForReceipt(
+    type: RuntimeReceiptType,
+    predicate?: (receipt: RuntimeReceipt) => boolean,
+    timeoutMs?: number
+  ): Promise<RuntimeReceipt> {
+    return this.receipts.waitFor(type, predicate, timeoutMs);
+  }
+
+  getRecentReceipts(limit?: number): RuntimeReceipt[] {
+    return this.receipts.recent(limit);
   }
 
   getSession(workspaceId: string): AgentSession | undefined {
@@ -275,6 +448,15 @@ export class AgentManager {
       }
 
       const checkpointedAt = new Date().toISOString();
+      if (workspace.workItemId) {
+        await this.exfClient
+          .heartbeatWorkItem(workspace.workItemId, {
+            claimOwner: workspace.claimOwner,
+            claimToken: workspace.claimToken,
+            leaseSeconds: 3600,
+          })
+          .catch(() => {});
+      }
       const saved: SavedResumableSession = {
         id: `${workspaceId}:${resumeId}`,
         workspaceId,
@@ -282,6 +464,10 @@ export class AgentManager {
         cwd: workspace.cwd,
         agentType: session.agentType,
         taskId: workspace.taskId,
+        workItemId: workspace.workItemId,
+        claimToken: workspace.claimToken,
+        claimOwner: workspace.claimOwner,
+        assignedAlias: workspace.assignedAlias,
         projectId: workspace.projectId,
         resumeId,
         resumeCommand,
@@ -289,6 +475,7 @@ export class AgentManager {
         checkpointStatus: 'saved',
         checkpointedAt,
         attachedContextItems: workspace.attachedContextItems || [],
+        sourceControl: workspace.sourceControl,
       };
 
       this.workspaceManager.updateWorkspace(workspaceId, {
@@ -303,10 +490,37 @@ export class AgentManager {
       session.resumeCapability = capability;
       await this.transition(workspaceId, 'stopped');
       this.workspaceManager.saveResumableSession(saved);
+      this.trace.record({
+        name: 'checkpoint.saved',
+        attributes: {
+          workspaceId,
+          taskId: saved.taskId,
+          workItemId: saved.workItemId,
+          agentType: saved.agentType,
+        },
+        outcome: 'success',
+      });
+      this.receipts.publish({
+        type: 'checkpoint.saved',
+        workspaceId,
+        taskId: saved.taskId,
+        workItemId: saved.workItemId,
+        agentType: saved.agentType,
+      });
       return saved;
-    } catch {
+    } catch (err) {
       this.workspaceManager.updateWorkspace(workspaceId, {
         checkpointStatus: 'failed',
+      });
+      this.trace.record({
+        name: 'checkpoint.failed',
+        attributes: { workspaceId },
+        outcome: 'failure',
+        error: err instanceof Error ? err.message : 'Failed to checkpoint session',
+      });
+      this.receipts.publish({
+        type: 'checkpoint.failed',
+        workspaceId,
       });
       return null;
     }
@@ -345,6 +559,10 @@ export class AgentManager {
       saved.agentType,
       {
         taskId: saved.taskId,
+        workItemId: saved.workItemId,
+        claimToken: saved.claimToken,
+        claimOwner: saved.claimOwner,
+        assignedAlias: saved.assignedAlias,
         projectId: saved.projectId,
         title: saved.title,
         cwd: saved.cwd,
@@ -353,12 +571,17 @@ export class AgentManager {
         resumeCommand: saved.resumeCommand,
         checkpointStatus: 'idle',
         attachedContextItems: saved.attachedContextItems || [],
+        sourceControl: saved.sourceControl,
       }
     );
 
     this.register({
       workspaceId,
       taskId: saved.taskId,
+      workItemId: saved.workItemId,
+      claimToken: saved.claimToken,
+      claimOwner: saved.claimOwner,
+      assignedAlias: saved.assignedAlias,
       agentType: saved.agentType,
       state: 'starting',
       startedAt: new Date().toISOString(),

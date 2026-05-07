@@ -1,10 +1,12 @@
 import * as http from 'node:http';
+import { randomUUID } from 'node:crypto';
 import type { AgentManager } from './agentManager.js';
 import type { DirectoryManager } from './directoryManager.js';
 import { DirectoryRequiredError } from './directoryManager.js';
 import type { WorkspaceManager } from './workspaceManager.js';
 import type { TaskDispatcher } from './taskDispatcher.js';
 import type { AugmentLog } from './augmentLog.js';
+import { RepoDetector } from './vcs/repoDetector.js';
 import type { ExfClient } from '../exfClient.js';
 import type { ExecuTermSocket } from '../execuTermSocket.js';
 import type {
@@ -16,6 +18,7 @@ import type {
   DaemonAuthState,
   NotificationPreferences,
   SessionState,
+  SourceControlStatus,
 } from '../types.js';
 import {
   DEFAULT_DASHBOARD_REFRESH_INTERVAL_MS,
@@ -24,6 +27,13 @@ import {
   readDaemonConfig,
   writeDaemonConfig,
 } from '../config.js';
+
+class RequestBodyTooLargeError extends Error {
+  constructor() {
+    super('Request body too large');
+    this.name = 'RequestBodyTooLargeError';
+  }
+}
 
 interface ContextSearchResult {
   id: string;
@@ -56,6 +66,8 @@ interface DashboardSettingsPayload {
 export class DashboardServer {
   private server: http.Server | null = null;
   private port = 0;
+  private readonly dashboardToken = randomUUID();
+  private readonly repoDetector = new RepoDetector();
 
   constructor(
     private getAgentManager: () => AgentManager | null,
@@ -102,8 +114,28 @@ export class DashboardServer {
     req: http.IncomingMessage,
     res: http.ServerResponse
   ): Promise<void> {
-    const url = new URL(req.url || '/', `http://127.0.0.1:${this.port}`);
+    try {
+      await this.routeRequest(req, res);
+    } catch (err) {
+      if (err instanceof RequestBodyTooLargeError) {
+        res.writeHead(413, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: err.message }));
+        return;
+      }
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.end(
+        JSON.stringify({
+          error: err instanceof Error ? err.message : 'Dashboard request failed',
+        })
+      );
+    }
+  }
 
+  private async routeRequest(
+    req: http.IncomingMessage,
+    res: http.ServerResponse
+  ): Promise<void> {
+    const url = new URL(req.url || '/', `http://127.0.0.1:${this.port}`);
     if (url.pathname === '/health' && req.method === 'GET') {
       res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ ok: true, port: this.port }));
@@ -125,8 +157,30 @@ export class DashboardServer {
       return;
     }
 
+    if (req.method === 'POST' && !this.isTrustedDashboardMutation(req)) {
+      res.writeHead(403, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: 'Dashboard request verification failed' }));
+      return;
+    }
+
     if (url.pathname === '/api/dispatch' && req.method === 'POST') {
       await this.handleDispatch(req, res);
+      return;
+    }
+
+    if (url.pathname === '/api/work-items' && req.method === 'GET') {
+      await this.serveWorkItems(url, res);
+      return;
+    }
+
+    if (url.pathname === '/api/work-items/dispatch' && req.method === 'POST') {
+      await this.handleDispatchWorkItem(req, res);
+      return;
+    }
+
+    const reviewMatch = url.pathname.match(/^\/api\/work-items\/([^/]+)\/(approve|changes|dismiss)$/);
+    if (reviewMatch && req.method === 'POST') {
+      await this.handleWorkItemReviewAction(reviewMatch[1], reviewMatch[2], req, res);
       return;
     }
 
@@ -305,8 +359,32 @@ export class DashboardServer {
     let body = '';
     for await (const chunk of req) {
       body += chunk;
+      if (body.length > 1024 * 1024) {
+        throw new RequestBodyTooLargeError();
+      }
     }
     return body;
+  }
+
+  private isTrustedDashboardMutation(req: http.IncomingMessage): boolean {
+    const token = req.headers['x-executerm-dashboard-token'];
+    if (token !== this.dashboardToken) {
+      return false;
+    }
+    const host = String(req.headers.host || '');
+    if (host && !/^127\.0\.0\.1(?::\d+)?$/.test(host) && !/^localhost(?::\d+)?$/.test(host)) {
+      return false;
+    }
+    const origin = req.headers.origin;
+    if (origin) {
+      try {
+        const parsed = new URL(String(origin));
+        return parsed.hostname === '127.0.0.1' || parsed.hostname === 'localhost';
+      } catch {
+        return false;
+      }
+    }
+    return true;
   }
 
   private async handleAgentHook(
@@ -392,6 +470,106 @@ export class DashboardServer {
       res.end(
         JSON.stringify({
           error: err instanceof Error ? err.message : 'Dispatch failed',
+        })
+      );
+    }
+  }
+
+  private async handleDispatchWorkItem(
+    req: http.IncomingMessage,
+    res: http.ServerResponse
+  ): Promise<void> {
+    const body = await this.readBody(req);
+
+    try {
+      const parsed = JSON.parse(body) as {
+        workItemId: string;
+        agentType?: AgentType;
+        cwdOverride?: string;
+      };
+      if (!parsed.workItemId) {
+        res.writeHead(400, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'workItemId is required' }));
+        return;
+      }
+      const dispatcher = this.getTaskDispatcher();
+      if (!dispatcher) {
+        res.writeHead(503, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'Task dispatcher unavailable (not authenticated)' }));
+        return;
+      }
+
+      const workspaceId = await dispatcher.dispatchWorkItem(
+        parsed.workItemId,
+        parsed.agentType || 'codex',
+        { cwdOverride: typeof parsed.cwdOverride === 'string' ? parsed.cwdOverride : undefined }
+      );
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ ok: true, workspaceId }));
+    } catch (err) {
+      if (err instanceof DirectoryRequiredError) {
+        res.writeHead(400, { 'Content-Type': 'application/json' });
+        res.end(
+          JSON.stringify({
+            error: err.message,
+            code: err.code,
+            projectId: err.projectId,
+          })
+        );
+        return;
+      }
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.end(
+        JSON.stringify({
+          error: err instanceof Error ? err.message : 'Work item dispatch failed',
+        })
+      );
+    }
+  }
+
+  private async handleWorkItemReviewAction(
+    workItemId: string,
+    action: string,
+    req: http.IncomingMessage,
+    res: http.ServerResponse
+  ): Promise<void> {
+    const body = await this.readBody(req);
+    const exfClient = this.getExfClient();
+    if (!exfClient) {
+      res.writeHead(503, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: 'Not authenticated' }));
+      return;
+    }
+
+    try {
+      const parsed = body ? JSON.parse(body) as { note?: string } : {};
+      const note = typeof parsed.note === 'string' && parsed.note.trim()
+        ? parsed.note.trim()
+        : undefined;
+      let result: unknown;
+      if (action === 'approve') {
+        result = await exfClient.completeWorkItem(workItemId, {
+          resultSummary: note || 'Approved from execuTerm dashboard.',
+        });
+      } else if (action === 'changes') {
+        result = await exfClient.releaseWorkItem(workItemId, {});
+      } else if (action === 'dismiss') {
+        result = await exfClient.cancelWorkItem(workItemId, {
+          resultSummary: note || 'Dismissed from execuTerm dashboard.',
+        });
+      } else {
+        res.writeHead(404, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'Unknown work item review action' }));
+        return;
+      }
+
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ ok: true, result }));
+    } catch (err) {
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.end(
+        JSON.stringify({
+          error: err instanceof Error ? err.message : 'Work item review action failed',
         })
       );
     }
@@ -605,6 +783,21 @@ export class DashboardServer {
     const auth = this.getAuthState();
     const templates = this.workspaceManager.listTemplates();
     const directories = this.directoryManager.getState();
+    const config = readDaemonConfig();
+    const sourceControlStatuses: SourceControlStatus[] = [];
+    if (config.vcs?.enabled) {
+      const cwdCandidates = Array.from(
+        new Set(
+          [
+            directories.lastLaunchDirectory,
+            ...Object.values(directories.projectDirectories || {}),
+          ].filter((cwd): cwd is string => !!cwd)
+        )
+      );
+      for (const cwd of cwdCandidates) {
+        sourceControlStatuses.push(await this.repoDetector.detect(cwd));
+      }
+    }
 
     let nextEvent: string | null = null;
     const exfClient = this.getExfClient();
@@ -644,6 +837,10 @@ export class DashboardServer {
         devServers: devWorkspaces.map((w) => ({ id: w.id, title: w.title, state: w.state })),
         templates: templates.map((t) => ({ id: t.id, name: t.name, kind: t.kind, color: t.color })),
         directories,
+        sourceControl: {
+          config: config.vcs,
+          statuses: sourceControlStatuses,
+        },
         nextEvent,
         cmuxWorkspaces,
       })
@@ -707,9 +904,17 @@ export class DashboardServer {
     }
   }
 
-  private toDashboardTask(record: Record<string, unknown>) {
+  private toDashboardTask(
+    record: Record<string, unknown>,
+    workItems: Record<string, unknown>[] = []
+  ) {
     const projectId = record.projectId as string | undefined;
     const directory = this.directoryManager.describeTaskDirectory(projectId);
+    const counts = workItems.reduce<Record<string, number>>((acc, item) => {
+      const status = String(item.status || 'unknown');
+      acc[status] = (acc[status] || 0) + 1;
+      return acc;
+    }, {});
     return {
       id: record.id,
       title: record.title,
@@ -720,6 +925,11 @@ export class DashboardServer {
       status: record.status,
       when: record.when,
       executorAgent: record.executorAgent,
+      workItems,
+      workSummary: {
+        total: workItems.length,
+        counts,
+      },
       resolvedDirectory: directory.cwd,
       directorySource: directory.source,
       preferredAgent:
@@ -739,14 +949,48 @@ export class DashboardServer {
       const priority = url.searchParams.get('priority') || undefined;
       const phase = url.searchParams.get('phase') || undefined;
       const result = await exfClient.listTasks({ limit: 100, priority, phase });
+      const workResult = await exfClient.listWorkItems({ limit: 200 });
+      const workByTask = new Map<string, Record<string, unknown>[]>();
+      for (const item of workResult.data?.workItems ?? []) {
+        if (!item.taskId) continue;
+        const existing = workByTask.get(item.taskId) || [];
+        existing.push(item as unknown as Record<string, unknown>);
+        workByTask.set(item.taskId, existing);
+      }
       const tasks = (result.data?.tasks ?? []).map((t) =>
-        this.toDashboardTask(t as Record<string, unknown>)
+        this.toDashboardTask(
+          t as Record<string, unknown>,
+          workByTask.get(String((t as Record<string, unknown>).id)) || []
+        )
       );
       res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ tasks }));
     } catch {
       res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ tasks: [] }));
+    }
+  }
+
+  private async serveWorkItems(url: URL, res: http.ServerResponse): Promise<void> {
+    const exfClient = this.getExfClient();
+    if (!exfClient) {
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ workItems: [] }));
+      return;
+    }
+    try {
+      const limit = Number(url.searchParams.get('limit') || '100');
+      const result = await exfClient.listWorkItems({
+        taskId: url.searchParams.get('taskId') || undefined,
+        status: url.searchParams.get('status') || undefined,
+        assignedAlias: url.searchParams.get('assignedAlias') || undefined,
+        limit: Number.isFinite(limit) ? limit : 100,
+      });
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ workItems: result.data?.workItems ?? [] }));
+    } catch {
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ workItems: [] }));
     }
   }
 
@@ -839,8 +1083,15 @@ export class DashboardServer {
 
     try {
       const result = await exfClient.getTask(taskId);
+      const workResult = await exfClient.listWorkItems({ taskId, limit: 100 });
+      const task = result.data?.task
+        ? {
+            ...(result.data.task as Record<string, unknown>),
+            workItems: workResult.data?.workItems ?? [],
+          }
+        : undefined;
       res.writeHead(200, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ task: result.data?.task }));
+      res.end(JSON.stringify({ task }));
     } catch {
       res.writeHead(500, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ error: 'Failed to fetch task' }));
@@ -1762,6 +2013,7 @@ export class DashboardServer {
   </div>
   <script>
     const surfaceId = ${JSON.stringify(surfaceId)};
+    const dashboardToken = ${JSON.stringify(this.dashboardToken)};
     const searchInput = document.getElementById('search');
     const resultsEl = document.getElementById('results');
     let debounce;
@@ -1814,7 +2066,7 @@ export class DashboardServer {
       try {
         await fetch('/api/context/inject', {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: { 'Content-Type': 'application/json', 'X-execuTerm-Dashboard-Token': dashboardToken },
           body: JSON.stringify({ surfaceId, item })
         });
         row.classList.add('sent');
@@ -1980,6 +2232,12 @@ export class DashboardServer {
     .task-expand__criteria { list-style: none; padding: 0; }
     .task-expand__criteria li { padding: 2px 0; color: var(--text-dim); font-size: 12px; }
     .task-expand__criteria li::before { content: '\\2610 '; font-size: 13px; margin-right: 4px; }
+    .work-item-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 4px 0; border-top: 1px solid var(--border-subtle); }
+    .work-item-row:first-child { border-top: none; }
+    .work-item-row__meta { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .work-item-row__actions { display: flex; gap: 4px; flex-shrink: 0; }
+    .work-item-row__actions button { font-family: var(--font-mono); font-size: 9px; color: var(--text-dim); background: var(--bg); border: 1px solid var(--border); border-radius: 3px; padding: 3px 6px; cursor: pointer; }
+    .work-item-row__actions button:hover { color: var(--text); background: var(--surface); }
 
     /* Task create form */
     .task-create { background: var(--surface); border: 1px solid var(--border); border-radius: 6px; padding: 12px; margin-top: 6px; display: flex; flex-direction: column; gap: 10px; animation: slideDown 0.15s ease-out; }
@@ -2043,6 +2301,7 @@ export class DashboardServer {
   <script>
     function esc(s) { if (!s) return ''; return String(s).replace(/&/g,'&amp;').replace(/[<]/g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;'); }
 
+    const DASHBOARD_TOKEN = ${JSON.stringify(this.dashboardToken)};
     const STATE_CFG = {
       starting:     { color: '#FFB84D', label: 'Starting',     pulse: true },
       running:      { color: '#34C759', label: 'Running',      pulse: true },
@@ -2287,9 +2546,21 @@ export class DashboardServer {
       return task.phase === 'done' || task.status === 'completed' || task.status === 'archived';
     }
 
+    function workSummaryLabel(task) {
+      var summary = task.workSummary || {};
+      var counts = summary.counts || {};
+      var parts = [];
+      ['running', 'claimed', 'queued', 'needs_review', 'blocked', 'failed'].forEach(function(status) {
+        if (counts[status]) {
+          parts.push(counts[status] + ' ' + status.replace(/_/g, ' '));
+        }
+      });
+      return parts.join(' · ');
+    }
+
     function isDefaultActionableTask(task) {
       if (isCompletedTask(task)) return false;
-      return !(task.phase === 'in_flight' && task.executorAgent);
+      return true;
     }
 
     function taskMatchesToolbar(task) {
@@ -2631,7 +2902,37 @@ export class DashboardServer {
         }
         html += '</ul></div>';
       }
-      if (!detail.agentBrief?.rationale && !detail.agentBrief?.deliverable && criteria.length === 0) {
+      const workItems = detail.workItems || [];
+      if (workItems.length > 0) {
+        html += '<div class="task-expand__field"><div class="task-expand__label">Agent Work</div><div class="task-expand__criteria">';
+        for (const item of workItems) {
+          const alias = item.assignedAliasDisplayName || item.assignedAlias || 'unassigned';
+          const artifacts = item.artifactRefs || [];
+          const branchArtifact = artifacts.find(function(a) { return a && a.type === 'branch'; });
+          const worktreeArtifact = artifacts.find(function(a) { return a && a.type === 'worktree'; });
+          const changedArtifact = artifacts.find(function(a) { return a && a.type === 'changed_files'; });
+          const branch = branchArtifact && branchArtifact.name ? branchArtifact.name : '';
+          const worktree = worktreeArtifact && worktreeArtifact.path ? baseName(worktreeArtifact.path) : '';
+          const changedCount = changedArtifact && changedArtifact.files ? changedArtifact.files.length : 0;
+          html += '<div class="task-expand__value work-item-row">'
+            + '<div class="work-item-row__meta"><strong>' + esc(item.status || 'unknown') + '</strong>'
+            + ' · ' + esc(alias)
+            + (branch ? ' · ' + esc(branch) : '')
+            + (worktree ? ' · ' + esc(worktree) : '')
+            + (changedCount ? ' · ' + changedCount + ' changed' : '')
+            + '</div>';
+          if (item.status === 'needs_review') {
+            html += '<div class="work-item-row__actions">'
+              + '<button onclick="event.stopPropagation();reviewWorkItem(&#39;' + esc(item.id) + '&#39;, &#39;approve&#39;)">Approve</button>'
+              + '<button onclick="event.stopPropagation();reviewWorkItem(&#39;' + esc(item.id) + '&#39;, &#39;changes&#39;)">Changes</button>'
+              + '<button onclick="event.stopPropagation();reviewWorkItem(&#39;' + esc(item.id) + '&#39;, &#39;dismiss&#39;)">Dismiss</button>'
+              + '</div>';
+          }
+          html += '</div>';
+        }
+        html += '</div></div>';
+      }
+      if (!detail.agentBrief?.rationale && !detail.agentBrief?.deliverable && criteria.length === 0 && workItems.length === 0) {
         html += '<span class="dim">No additional details</span>';
       }
       html += '</div>';
@@ -2760,9 +3061,11 @@ export class DashboardServer {
           const directorySource = getTaskDirectorySource(t);
           const dispatchDisabled = !resolvedDirectory;
           const isExpanded = expandedTasks.has(t.id);
+          const workLabel = workSummaryLabel(t);
           html += '<div class="task-row" onclick="toggleTaskExpand(&#39;'+esc(t.id)+'&#39;)" style="'+(isExpanded ? 'border-radius:5px 5px 0 0;border-bottom-color:transparent;border-left:2px solid var(--brand-teal);' : '')+'">'
             + (priLabel ? '<span class="task-row__priority task-row__priority--chip" style="color:'+pc+';border:1px solid '+pc+'33">'+esc(priLabel)+'</span>' : '')
             + '<span class="task-row__title">'+esc(t.title || '')+'</span>'
+            + (workLabel ? '<span class="task-row__meta">'+esc(workLabel)+'</span>' : '')
             + '<span class="task-row__dir">'+esc(shortPath(resolvedDirectory))+'</span>'
             + '<span class="task-row__dir-source">'+esc(directorySourceLabel(directorySource))+'</span>'
             + (t.effort ? '<span class="task-row__meta">'+esc(t.effort)+'</span>' : '')
@@ -2770,7 +3073,7 @@ export class DashboardServer {
             + agents.map(a => '<option value="'+esc(a.id)+'" '+(a.id === getSelectedTaskAgent(t) ? 'selected' : '')+'>'+esc(a.name)+'</option>').join('')
             + '</select>'
             + '<button class="btn-secondary" onclick="event.stopPropagation();selectDirectory(&#39;'+esc(t.projectId || '')+'&#39;)">'+(resolvedDirectory ? 'Change Folder' : 'Map Folder')+'</button>'
-            + '<button class="task-row__dispatch" onclick="event.stopPropagation();dispatchTask(&#39;'+esc(t.id)+'&#39;,&#39;'+esc(t.id)+'&#39;)" '+(dispatchDisabled ? 'disabled' : '')+'>dispatch</button>'
+            + '<button class="task-row__dispatch" onclick="event.stopPropagation();dispatchTask(&#39;'+esc(t.id)+'&#39;,&#39;'+esc(t.id)+'&#39;)" '+(dispatchDisabled ? 'disabled' : '')+'>start work</button>'
             + '</div>';
           if (isExpanded) {
             html += renderTaskExpansion(t.id);
@@ -2898,7 +3201,7 @@ export class DashboardServer {
     // ---- Actions ----
 
     async function postJSON(url, data) {
-      const r = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) });
+      const r = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-execuTerm-Dashboard-Token': DASHBOARD_TOKEN }, body: JSON.stringify(data) });
       return r.json();
     }
     async function saveDirectory(projectId, cwd) {
@@ -2935,6 +3238,14 @@ export class DashboardServer {
       const r = await postJSON('/api/dispatch', { taskId, agentType });
       if (r.error) alert(r.error);
       else requestDashboardRefresh('mutation');
+    }
+    async function reviewWorkItem(workItemId, action) {
+      const r = await postJSON('/api/work-items/' + encodeURIComponent(workItemId) + '/' + encodeURIComponent(action), {});
+      if (r.error) alert(r.error);
+      else {
+        Object.keys(taskDetailsCache).forEach(function(key) { delete taskDetailsCache[key]; });
+        requestDashboardRefresh('mutation');
+      }
     }
     async function stopAgent(workspaceId) {
       const r = await postJSON('/api/agent/stop', { workspaceId });

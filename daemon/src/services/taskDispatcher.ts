@@ -1,13 +1,27 @@
+import { randomUUID } from 'node:crypto';
+
+import { readDaemonConfig } from '../config.js';
+import type { AgentWorkItemResponse } from '../exfClient.js';
 import type { ExfClient } from '../exfClient.js';
 import { buildTaskPrompt } from '../promptBuilder.js';
 import type { CodeMemory, ProjectContext, TaskContext } from '../promptBuilder.js';
 import type { AgentType } from '../types.js';
-import { toTaskExecutorAgent } from '../types.js';
 import type { AgentManager } from './agentManager.js';
 import type { DirectoryManager } from './directoryManager.js';
+import { TraceRecorder } from './observability/traceRecorder.js';
+import { GitWorktreeManager } from './vcs/gitWorktreeManager.js';
 import type { WorkspaceManager } from './workspaceManager.js';
 
 const MAX_QUERY_LENGTH = 500;
+const DEFAULT_LEASE_SECONDS = 3600;
+
+function agentAliasFor(agentType: AgentType): string {
+  return agentType;
+}
+
+function claimOwnerFor(agentType: AgentType): string {
+  return `executerm:${agentType}`;
+}
 
 function buildMemorySearchQuery(task: Record<string, unknown>): string {
   const parts: string[] = [];
@@ -27,10 +41,24 @@ export class TaskDispatcher {
     private exfClient: ExfClient,
     private directoryManager: DirectoryManager,
     private workspaceManager: WorkspaceManager,
-    private agentManager: AgentManager
+    private agentManager: AgentManager,
+    private gitWorktreeManager = new GitWorktreeManager(),
+    private trace = new TraceRecorder()
   ) {}
 
   async dispatch(
+    taskId: string,
+    agentType: AgentType,
+    opts?: { cwdOverride?: string }
+  ): Promise<string> {
+    return this.trace.span(
+      'dispatch.task',
+      { taskId, agentType },
+      () => this.dispatchTaskInternal(taskId, agentType, opts)
+    );
+  }
+
+  private async dispatchTaskInternal(
     taskId: string,
     agentType: AgentType,
     opts?: { cwdOverride?: string }
@@ -86,38 +114,235 @@ export class TaskDispatcher {
         | undefined,
     };
 
-    // 5. Build prompt
+    // 5. Build prompt and create claimable agent work for this human task.
     const prompt = buildTaskPrompt(taskContext, projectContext, memories);
     const projectId = task.projectId as string | undefined;
-    const cwd = this.directoryManager.resolveTaskDirectory(
+    const assignedAlias = agentAliasFor(agentType);
+    const claimOwner = claimOwnerFor(agentType);
+    const created = await this.exfClient.createWorkItem({
+      title: task.title as string,
+      prompt,
+      taskId,
+      projectId: projectId ?? null,
+      assignedAlias,
+      inputContext: {
+        source: 'executerm.task_dispatch',
+        taskId,
+        projectId: projectId ?? null,
+      },
+      acceptanceCriteria:
+        (task.acceptanceCriteria as unknown[] | undefined) ?? [],
+      writeScope: task.scope as Record<string, unknown> | undefined,
+      verificationCommands:
+        typeof task.verification === 'string' && task.verification.trim()
+          ? [task.verification.trim()]
+          : [],
+    });
+    const workItem = created.data?.workItem;
+    if (!workItem?.id) {
+      throw new Error(created.error || 'Failed to create agent work item');
+    }
+
+    this.trace.record({
+      name: 'dispatch.work_item_created',
+      attributes: {
+        taskId,
+        workItemId: workItem.id,
+        agentType,
+        assignedAlias,
+      },
+      outcome: 'success',
+    });
+
+    return this.dispatchClaimedWorkItem(workItem, agentType, {
+      task,
+      prompt,
+      cwdOverride: opts?.cwdOverride,
+      assignedAlias,
+      claimOwner,
       projectId,
-      opts?.cwdOverride
+    });
+  }
+
+  async dispatchWorkItem(
+    workItemId: string,
+    agentType: AgentType = 'codex',
+    opts?: { cwdOverride?: string }
+  ): Promise<string> {
+    return this.trace.span(
+      'dispatch.work_item',
+      { workItemId, agentType },
+      () => this.dispatchWorkItemInternal(workItemId, agentType, opts)
     );
+  }
+
+  private async dispatchWorkItemInternal(
+    workItemId: string,
+    agentType: AgentType = 'codex',
+    opts?: { cwdOverride?: string }
+  ): Promise<string> {
+    const claimOwner = claimOwnerFor(agentType);
+    const claimed = await this.exfClient.claimWorkItem({
+      workItemId,
+      assignedAlias: agentAliasFor(agentType),
+      claimOwner,
+      leaseSeconds: DEFAULT_LEASE_SECONDS,
+    });
+    const workItem = claimed.data?.workItem;
+    if (!workItem?.id) {
+      throw new Error(claimed.error || 'Failed to claim agent work item');
+    }
+    this.trace.record({
+      name: 'dispatch.work_item_claimed',
+      attributes: {
+        workItemId: workItem.id,
+        agentType,
+        assignedAlias: workItem.assignedAlias,
+      },
+      outcome: 'success',
+    });
+
+    let task: Record<string, unknown> = {
+      id: workItem.taskId ?? undefined,
+      title: workItem.title,
+      projectId: workItem.projectId ?? undefined,
+    };
+    if (workItem.taskId) {
+      const taskResult = await this.exfClient.getTask(workItem.taskId);
+      if (taskResult.data?.task) {
+        task = taskResult.data.task as Record<string, unknown>;
+      }
+    }
+
+    const prompt =
+      typeof (workItem as any).prompt === 'string' && (workItem as any).prompt
+        ? (workItem as any).prompt
+        : `# Task: ${workItem.title}\n\nExecute this claimed Siftable agent work item.\n\nWork item: ${workItem.id}`;
+
+    return this.dispatchClaimedWorkItem(workItem, agentType, {
+      task,
+      prompt,
+      cwdOverride: opts?.cwdOverride,
+      assignedAlias: workItem.assignedAlias || agentAliasFor(agentType),
+      claimOwner,
+      projectId: (workItem.projectId || task.projectId) as string | undefined,
+    });
+  }
+
+  private async dispatchClaimedWorkItem(
+    initialWorkItem: AgentWorkItemResponse,
+    agentType: AgentType,
+    opts: {
+      task: Record<string, unknown>;
+      prompt: string;
+      cwdOverride?: string;
+      assignedAlias: string;
+      claimOwner: string;
+      projectId?: string;
+    }
+  ): Promise<string> {
+    let workItem = initialWorkItem;
+    if (workItem.status !== 'claimed') {
+      const claimed = await this.exfClient.claimWorkItem({
+        workItemId: workItem.id,
+        assignedAlias: opts.assignedAlias,
+        claimOwner: opts.claimOwner,
+        leaseSeconds: DEFAULT_LEASE_SECONDS,
+      });
+      if (!claimed.data?.workItem) {
+        throw new Error(claimed.error || 'Failed to claim agent work item');
+      }
+      workItem = claimed.data.workItem;
+      this.trace.record({
+        name: 'dispatch.work_item_claimed',
+        attributes: {
+          workItemId: workItem.id,
+          agentType,
+          assignedAlias: opts.assignedAlias,
+        },
+        outcome: 'success',
+      });
+    }
+
+    const started = await this.exfClient.startWorkItem(workItem.id, {
+      claimOwner: opts.claimOwner,
+      claimToken: workItem.claimToken ?? undefined,
+      leaseSeconds: DEFAULT_LEASE_SECONDS,
+    });
+    if (started.data?.workItem) {
+      workItem = started.data.workItem;
+    }
+    this.trace.record({
+      name: 'dispatch.work_item_started',
+      attributes: {
+        workItemId: workItem.id,
+        taskId: workItem.taskId,
+        agentType,
+        assignedAlias: opts.assignedAlias,
+      },
+      outcome: 'success',
+    });
+
+    const projectId = opts.projectId;
+    let cwd = this.directoryManager.resolveTaskDirectory(
+      projectId,
+      opts.cwdOverride
+    );
+    let sourceControl;
+    const config = readDaemonConfig();
+    if (config.vcs?.enabled && config.vcs.autoCreateWorktree) {
+      const result = await this.gitWorktreeManager.createForSession({
+        cwd,
+        workspaceId: randomUUID().toLowerCase(),
+        workItemId: workItem.id,
+        taskId: workItem.taskId ?? undefined,
+        projectId,
+        config: config.vcs,
+      });
+      cwd = result.cwd;
+      sourceControl = result.sourceControl;
+    }
 
     // 6. Create workspace from template
     const workspaceId = await this.workspaceManager.createFromTemplate(
       agentType,
       {
-        taskId,
+        taskId: workItem.taskId ?? undefined,
+        workItemId: workItem.id,
+        claimToken: workItem.claimToken ?? undefined,
+        claimOwner: opts.claimOwner,
+        assignedAlias: opts.assignedAlias,
         projectId,
-        title: task.title as string,
+        title: opts.task.title as string,
         cwd,
-        initialPrompt: prompt,
+        initialPrompt: opts.prompt,
+        sourceControl,
       }
     );
-
-    // 7. Update task in ExecuFunction (use correct backend enum)
-    await this.exfClient.updateTask(taskId, {
-      executorAgent: toTaskExecutorAgent(agentType),
-      phase: 'in_flight',
+    this.trace.record({
+      name: 'dispatch.workspace_launched',
+      attributes: {
+        workspaceId,
+        workItemId: workItem.id,
+        taskId: workItem.taskId,
+        agentType,
+        cwd,
+        sourceControlMode: sourceControl?.mode,
+      },
+      outcome: 'success',
     });
 
     this.directoryManager.rememberAgentPreference(agentType, projectId);
 
-    // 8. Register agent session
+    // Human task assignment remains separate from executable agent work.
+    // Do not write task.executorAgent here; work item status is the execution source of truth.
     this.agentManager.register({
       workspaceId,
-      taskId,
+      taskId: workItem.taskId ?? undefined,
+      workItemId: workItem.id,
+      claimToken: workItem.claimToken ?? undefined,
+      claimOwner: opts.claimOwner,
+      assignedAlias: opts.assignedAlias,
       agentType,
       state: 'starting',
       startedAt: new Date().toISOString(),

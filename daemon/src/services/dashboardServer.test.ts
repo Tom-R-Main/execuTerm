@@ -12,10 +12,24 @@ function makeRequest(body: object, url = '/api/agent/stop') {
   return {
     method: 'POST',
     url,
+    headers: {},
     async *[Symbol.asyncIterator]() {
       yield payload;
     },
   } as any;
+}
+
+function makeDashboardRequest(
+  server: DashboardServer,
+  body: object,
+  url = '/api/agent/stop'
+) {
+  const request = makeRequest(body, url);
+  request.headers = {
+    host: '127.0.0.1:1234',
+    'x-executerm-dashboard-token': (server as any).dashboardToken,
+  };
+  return request;
 }
 
 function makeGetRequest(url = '/api/tasks') {
@@ -80,7 +94,10 @@ describe('DashboardServer agent stop API', () => {
     );
     const response = makeResponse();
 
-    await (server as any).handleRequest(makeRequest({ workspaceId: 'ws-1' }), response);
+    await (server as any).handleRequest(
+      makeDashboardRequest(server, { workspaceId: 'ws-1' }),
+      response
+    );
 
     expect(response.statusCode).toBe(200);
     expect(JSON.parse(response.body)).toEqual({ ok: true });
@@ -105,7 +122,7 @@ describe('DashboardServer agent stop API', () => {
     const response = makeResponse();
 
     await (server as any).handleRequest(
-      makeRequest({ workspaceId: 'missing-ws' }),
+      makeDashboardRequest(server, { workspaceId: 'missing-ws' }),
       response
     );
 
@@ -135,7 +152,8 @@ describe('DashboardServer agent stop API', () => {
     const response = makeResponse();
 
     await (server as any).handleRequest(
-      makeRequest(
+      makeDashboardRequest(
+        server,
         { taskId: 'task-1', agentType: 'codex' },
         '/api/dispatch'
       ),
@@ -165,13 +183,83 @@ describe('DashboardServer agent stop API', () => {
     const response = makeResponse();
 
     await (server as any).handleRequest(
-      makeRequest({ workspaceId: 'ws-focus' }, '/api/agent/focus'),
+      makeDashboardRequest(server, { workspaceId: 'ws-focus' }, '/api/agent/focus'),
       response
     );
 
     expect(response.statusCode).toBe(200);
     expect(JSON.parse(response.body)).toEqual({ ok: true });
     expect(cmux.workspaceSelect).toHaveBeenCalledWith('ws-focus');
+  });
+
+  it.each([
+    ['approve', 'completeWorkItem'],
+    ['changes', 'releaseWorkItem'],
+    ['dismiss', 'cancelWorkItem'],
+  ])('routes %s work-item review actions through ExfClient', async (action, methodName) => {
+    const exfClient = {
+      completeWorkItem: jest.fn(async () => ({ data: { workItem: { id: 'work-1' } } })),
+      releaseWorkItem: jest.fn(async () => ({ data: { workItem: { id: 'work-1' } } })),
+      cancelWorkItem: jest.fn(async () => ({ data: { workItem: { id: 'work-1' } } })),
+    };
+    const workspaceManager = {} as any;
+    const server = new DashboardServer(
+      () => null,
+      directoryManager as any,
+      workspaceManager,
+      () => exfClient as any,
+      () => authState,
+      () => null,
+      () => mockCmux as any
+    );
+    const response = makeResponse();
+
+    await (server as any).handleRequest(
+      makeDashboardRequest(
+        server,
+        { note: 'human decision' },
+        `/api/work-items/work-1/${action}`
+      ),
+      response
+    );
+
+    expect(response.statusCode).toBe(200);
+    expect(JSON.parse(response.body)).toEqual(
+      expect.objectContaining({ ok: true })
+    );
+    expect((exfClient as any)[methodName]).toHaveBeenCalledWith(
+      'work-1',
+      expect.any(Object)
+    );
+  });
+
+  it('rejects dashboard POST mutations without the dashboard token', async () => {
+    const agentManager = {
+      getSession: jest.fn(() => ({ workspaceId: 'ws-1' })),
+      stop: jest.fn(async () => {}),
+    };
+    const workspaceManager = {} as any;
+    const server = new DashboardServer(
+      () => agentManager as any,
+      directoryManager as any,
+      workspaceManager,
+      () => null,
+      () => authState,
+      () => null,
+      () => mockCmux as any
+    );
+    const response = makeResponse();
+
+    await (server as any).handleRequest(
+      makeRequest({ workspaceId: 'ws-1' }),
+      response
+    );
+
+    expect(response.statusCode).toBe(403);
+    expect(JSON.parse(response.body)).toEqual({
+      error: 'Dashboard request verification failed',
+    });
+    expect(agentManager.stop).not.toHaveBeenCalled();
   });
 });
 
@@ -208,7 +296,8 @@ describe('DashboardServer task creation API', () => {
     const response = makeResponse();
 
     await (server as any).handleRequest(
-      makeRequest(
+      makeDashboardRequest(
+        server,
         {
           title: 'Dashboard create task',
           description: 'repro',
@@ -247,7 +336,8 @@ describe('DashboardServer task creation API', () => {
     const response = makeResponse();
 
     await (server as any).handleRequest(
-      makeRequest(
+      makeDashboardRequest(
+        server,
         {
           title: 'Broken Dashboard create task',
           priority: 'bad-value',
@@ -279,6 +369,7 @@ describe('DashboardServer task creation API', () => {
           ],
         },
       })),
+      listWorkItems: jest.fn(async () => ({ data: { workItems: [] } })),
     };
     const workspaceManager = {} as any;
     const server = new DashboardServer(
@@ -430,7 +521,8 @@ describe('DashboardServer dashboard settings API', () => {
     const response = makeResponse();
 
     await (server as any).handleRequest(
-      makeRequest(
+      makeDashboardRequest(
+        server,
         {
           refreshMode: 'manual',
           refreshIntervalMs: 60000,
@@ -549,7 +641,8 @@ describe('DashboardServer context APIs', () => {
 
     const attachResponse = makeResponse();
     await (server as any).handleRequest(
-      makeRequest(
+      makeDashboardRequest(
+        server,
         {
           workspaceId: 'ws-1',
           item: {
@@ -579,7 +672,7 @@ describe('DashboardServer context APIs', () => {
 
     const sendResponse = makeResponse();
     await (server as any).handleRequest(
-      makeRequest({ workspaceId: 'ws-1' }, '/api/context/send'),
+      makeDashboardRequest(server, { workspaceId: 'ws-1' }, '/api/context/send'),
       sendResponse
     );
 

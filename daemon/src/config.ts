@@ -10,6 +10,7 @@ import type {
   LocalWorkspace,
   SavedResumableSession,
   ToolAugmentConfig,
+  VcsConfig,
 } from './types.js';
 
 export const DEFAULT_NOTIFICATION_PREFS = {
@@ -24,6 +25,15 @@ export const DEFAULT_AUGMENT_CONFIG: ToolAugmentConfig = {
   semanticTimeoutMs: 1500,
   maxSemanticResults: 8,
   minQueryLength: 3,
+};
+
+export const DEFAULT_VCS_CONFIG: VcsConfig = {
+  enabled: false,
+  worktreeRoot: join(homedir(), '.execufunction', 'worktrees'),
+  jjEnabled: false,
+  autoCreateWorktree: false,
+  autoMerge: false,
+  allowPush: false,
 };
 
 const VALID_AUGMENT_TOOLS = new Set(['grep', 'rg']);
@@ -70,6 +80,24 @@ function normalizeAugmentConfig(
   };
 }
 
+function normalizeVcsConfig(
+  input: Partial<VcsConfig> | undefined
+): VcsConfig {
+  const merged = { ...DEFAULT_VCS_CONFIG, ...(input || {}) };
+  const worktreeRoot =
+    typeof merged.worktreeRoot === 'string' && merged.worktreeRoot.trim()
+      ? merged.worktreeRoot.trim().replace(/^~(?=\/|$)/, homedir())
+      : DEFAULT_VCS_CONFIG.worktreeRoot;
+  return {
+    enabled: !!merged.enabled,
+    worktreeRoot,
+    jjEnabled: !!merged.jjEnabled,
+    autoCreateWorktree: !!merged.autoCreateWorktree,
+    autoMerge: false,
+    allowPush: false,
+  };
+}
+
 export const DEFAULT_DASHBOARD_REFRESH_MODE: DashboardRefreshMode = 'timed';
 export const DEFAULT_DASHBOARD_REFRESH_INTERVAL_MS = 10000;
 const VALID_DASHBOARD_REFRESH_INTERVALS = new Set([5000, 10000, 30000, 60000]);
@@ -86,6 +114,7 @@ const DEFAULT_CONFIG: DaemonConfig = {
   launchFailureTimeoutMs: 20000,
   notifications: { ...DEFAULT_NOTIFICATION_PREFS },
   augment: { ...DEFAULT_AUGMENT_CONFIG },
+  vcs: { ...DEFAULT_VCS_CONFIG },
 };
 
 export function getConfigDir(): string {
@@ -110,6 +139,13 @@ function getDaemonConfigFile(): string {
 
 function getDaemonStateFile(): string {
   return join(getConfigDir(), 'terminal-state.json');
+}
+
+export function getTraceFilePath(): string {
+  if (process.env.EXECUTERM_TRACE_FILE) {
+    return process.env.EXECUTERM_TRACE_FILE;
+  }
+  return join(getConfigDir(), 'logs', 'executerm.trace.ndjson');
 }
 
 export function readAuthToken(): string | null {
@@ -153,7 +189,7 @@ export function writeDaemonConfig(config: DaemonConfig): void {
     getDaemonConfigFile(),
     JSON.stringify(normalizeDaemonConfig(config), null, 2),
     {
-    mode: 0o600,
+      mode: 0o600,
     }
   );
 }
@@ -173,6 +209,7 @@ export function normalizeDaemonConfig(config: Partial<DaemonConfig>): DaemonConf
     dashboardRefreshMode: refreshMode,
     dashboardRefreshIntervalMs: refreshInterval,
     augment: normalizeAugmentConfig(merged.augment),
+    vcs: normalizeVcsConfig(merged.vcs),
   };
 }
 
@@ -218,6 +255,10 @@ function normalizeWorkspace(
     title: String(workspace.title || ''),
     cwd: String(workspace.cwd || ''),
     kind: (workspace.kind || 'shell') as LocalWorkspace['kind'],
+    workItemId: workspace.workItemId ? String(workspace.workItemId) : undefined,
+    claimToken: workspace.claimToken ? String(workspace.claimToken) : undefined,
+    claimOwner: workspace.claimOwner ? String(workspace.claimOwner) : undefined,
+    assignedAlias: workspace.assignedAlias ? String(workspace.assignedAlias) : undefined,
     state: (workspace.state || 'stopped') as LocalWorkspace['state'],
     lastActivity: String(workspace.lastActivity || new Date().toISOString()),
     attachedContextItems: normalizeAttachedContextItems(
@@ -236,6 +277,10 @@ function normalizeSavedSession(
     title: String(session.title || ''),
     cwd: String(session.cwd || ''),
     agentType: (session.agentType || 'codex') as SavedResumableSession['agentType'],
+    workItemId: session.workItemId ? String(session.workItemId) : undefined,
+    claimToken: session.claimToken ? String(session.claimToken) : undefined,
+    claimOwner: session.claimOwner ? String(session.claimOwner) : undefined,
+    assignedAlias: session.assignedAlias ? String(session.assignedAlias) : undefined,
     resumeId: String(session.resumeId || ''),
     resumeCommand: String(session.resumeCommand || ''),
     resumeCapability: (session.resumeCapability || 'codex') as SavedResumableSession['resumeCapability'],
