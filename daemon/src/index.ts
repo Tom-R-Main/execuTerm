@@ -29,6 +29,7 @@ import { TaskDispatcher } from './services/taskDispatcher.js';
 import { DashboardServer } from './services/dashboardServer.js';
 import { DirectoryManager } from './services/directoryManager.js';
 import { AugmentLog } from './services/augmentLog.js';
+import { RalphRunService } from './services/ralphRunService.js';
 import { installShims } from './services/shimInstaller.js';
 import type { AgentType, DaemonState } from './types.js';
 
@@ -93,6 +94,7 @@ async function main(): Promise<void> {
   const state: DaemonState = readDaemonState() || {
     workspaces: {},
     savedSessions: {},
+    ralphRuns: {},
     hookServerPort: 0,
     lastSync: new Date().toISOString(),
   };
@@ -124,6 +126,7 @@ async function main(): Promise<void> {
   let agentManager: AgentManager | null = null;
   let hookObserver: HookObserver | null = null;
   let taskDispatcher: TaskDispatcher | null = null;
+  let ralphRunService: RalphRunService | null = null;
 
   const startAuthenticatedServices = async (client: ExfClient): Promise<void> => {
     if (exfClient) {
@@ -162,6 +165,12 @@ async function main(): Promise<void> {
       directoryManager,
       workspaceManager,
       agentManager
+    );
+    ralphRunService = new RalphRunService(
+      client,
+      taskDispatcher,
+      agentManager,
+      workspaceManager
     );
     console.log('Task dispatcher ready');
   };
@@ -224,7 +233,8 @@ async function main(): Promise<void> {
     () => authCoordinator.getState(),
     () => taskDispatcher,
     () => cmux,
-    augmentLog
+    augmentLog,
+    () => ralphRunService
   );
   const dashboardPort = await dashboard.start(config.dashboardPort);
   state.hookServerPort = dashboardPort;

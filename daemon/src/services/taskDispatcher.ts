@@ -5,7 +5,7 @@ import type { AgentWorkItemResponse } from '../exfClient.js';
 import type { ExfClient } from '../exfClient.js';
 import { buildTaskPrompt } from '../promptBuilder.js';
 import type { CodeMemory, ProjectContext, TaskContext } from '../promptBuilder.js';
-import type { AgentType } from '../types.js';
+import type { AgentType, SourceControlState } from '../types.js';
 import type { AgentManager } from './agentManager.js';
 import type { DirectoryManager } from './directoryManager.js';
 import { TraceRecorder } from './observability/traceRecorder.js';
@@ -167,7 +167,14 @@ export class TaskDispatcher {
   async dispatchWorkItem(
     workItemId: string,
     agentType: AgentType = 'codex',
-    opts?: { cwdOverride?: string }
+    opts?: {
+      cwdOverride?: string;
+      promptOverride?: string;
+      prepareWorktree?: (
+        worktreePath: string,
+        sourceControl?: SourceControlState
+      ) => Promise<void> | void;
+    }
   ): Promise<string> {
     return this.trace.span(
       'dispatch.work_item',
@@ -179,7 +186,14 @@ export class TaskDispatcher {
   private async dispatchWorkItemInternal(
     workItemId: string,
     agentType: AgentType = 'codex',
-    opts?: { cwdOverride?: string }
+    opts?: {
+      cwdOverride?: string;
+      promptOverride?: string;
+      prepareWorktree?: (
+        worktreePath: string,
+        sourceControl?: SourceControlState
+      ) => Promise<void> | void;
+    }
   ): Promise<string> {
     const claimOwner = claimOwnerFor(agentType);
     const claimed = await this.exfClient.claimWorkItem({
@@ -214,15 +228,16 @@ export class TaskDispatcher {
       }
     }
 
-    const prompt =
-      typeof (workItem as any).prompt === 'string' && (workItem as any).prompt
+    const prompt = opts?.promptOverride
+      || (typeof (workItem as any).prompt === 'string' && (workItem as any).prompt
         ? (workItem as any).prompt
-        : `# Task: ${workItem.title}\n\nExecute this claimed Siftable agent work item.\n\nWork item: ${workItem.id}`;
+        : `# Task: ${workItem.title}\n\nExecute this claimed Siftable agent work item.\n\nWork item: ${workItem.id}`);
 
     return this.dispatchClaimedWorkItem(workItem, agentType, {
       task,
       prompt,
       cwdOverride: opts?.cwdOverride,
+      prepareWorktree: opts?.prepareWorktree,
       assignedAlias: workItem.assignedAlias || agentAliasFor(agentType),
       claimOwner,
       projectId: (workItem.projectId || task.projectId) as string | undefined,
@@ -236,6 +251,10 @@ export class TaskDispatcher {
       task: Record<string, unknown>;
       prompt: string;
       cwdOverride?: string;
+      prepareWorktree?: (
+        worktreePath: string,
+        sourceControl?: SourceControlState
+      ) => Promise<void> | void;
       assignedAlias: string;
       claimOwner: string;
       projectId?: string;
@@ -301,6 +320,9 @@ export class TaskDispatcher {
       });
       cwd = result.cwd;
       sourceControl = result.sourceControl;
+    }
+    if (opts.prepareWorktree) {
+      await opts.prepareWorktree(cwd, sourceControl);
     }
 
     // 6. Create workspace from template

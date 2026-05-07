@@ -6,6 +6,7 @@ import { DirectoryRequiredError } from './directoryManager.js';
 import type { WorkspaceManager } from './workspaceManager.js';
 import type { TaskDispatcher } from './taskDispatcher.js';
 import type { AugmentLog } from './augmentLog.js';
+import type { RalphRunService } from './ralphRunService.js';
 import { RepoDetector } from './vcs/repoDetector.js';
 import {
   latestVerificationArtifact,
@@ -83,7 +84,8 @@ export class DashboardServer {
     private getAuthState: () => DaemonAuthState,
     private getTaskDispatcher: () => TaskDispatcher | null,
     private getCmux?: () => ExecuTermSocket,
-    private augmentLog?: AugmentLog
+    private augmentLog?: AugmentLog,
+    private getRalphRunService?: () => RalphRunService | null
   ) {}
 
   async start(preferredPort?: number): Promise<number> {
@@ -181,6 +183,12 @@ export class DashboardServer {
 
     if (url.pathname === '/api/work-items/dispatch' && req.method === 'POST') {
       await this.handleDispatchWorkItem(req, res);
+      return;
+    }
+
+    const ralphMatch = url.pathname.match(/^\/api\/work-items\/([^/]+)\/ralph\/(start|stop)$/);
+    if (ralphMatch && req.method === 'POST') {
+      await this.handleRalphAction(ralphMatch[1], ralphMatch[2], req, res);
       return;
     }
 
@@ -635,6 +643,41 @@ export class DashboardServer {
     }
   }
 
+  private async handleRalphAction(
+    workItemId: string,
+    action: string,
+    req: http.IncomingMessage,
+    res: http.ServerResponse
+  ): Promise<void> {
+    const service = this.getRalphRunService?.();
+    if (!service) {
+      res.writeHead(503, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: 'Ralph Mode unavailable' }));
+      return;
+    }
+
+    try {
+      const body = await this.readBody(req);
+      const parsed = body ? JSON.parse(body) as {
+        agentType?: AgentType;
+        maxIterations?: number;
+        stopOnVerificationPassed?: boolean;
+        stopOnRepeatedFailure?: boolean;
+        stopOnSensitivePaths?: boolean;
+      } : {};
+      const run = action === 'start'
+        ? await service.start(workItemId, parsed)
+        : await service.stop(workItemId);
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ ok: true, run }));
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Ralph action failed';
+      const status = message.includes('already running') ? 409 : 400;
+      res.writeHead(status, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: message }));
+    }
+  }
+
   private async handleDirectorySelect(
     req: http.IncomingMessage,
     res: http.ServerResponse
@@ -904,6 +947,11 @@ export class DashboardServer {
           config: config.vcs,
           statuses: sourceControlStatuses,
         },
+        ralphRuns:
+          this.getRalphRunService?.()?.listRuns() ??
+          (typeof (this.workspaceManager as unknown as { listRalphRuns?: unknown }).listRalphRuns === 'function'
+            ? this.workspaceManager.listRalphRuns()
+            : []),
         nextEvent,
         cmuxWorkspaces,
       })
@@ -2423,6 +2471,7 @@ export class DashboardServer {
     let cachedDirectories = { projectDirectories: {}, recentDirectories: [], lastLaunchDirectory: null, projectAgentPreferences: {}, lastAgentType: null };
     let cachedTasks = [];
     let cachedWorkItems = [];
+    let cachedRalphRuns = [];
     let cachedTemplates = [];
     let cachedNotifPrefs = { onNeedsInput: true, onFinished: true, onFailed: true };
     let cachedProjects = [];
@@ -2652,7 +2701,8 @@ export class DashboardServer {
     }
 
     function artifactByType(item, type) {
-      return itemArtifacts(item).find(function(a) { return a.type === type; }) || null;
+      var matches = artifactsByType(item, type);
+      return matches.length ? matches[matches.length - 1] : null;
     }
 
     function artifactsByType(item, type) {
@@ -2662,6 +2712,40 @@ export class DashboardServer {
     function latestVerification(item) {
       var matches = artifactsByType(item, 'verification_result');
       return matches.length ? matches[matches.length - 1] : null;
+    }
+
+    function ralphRunFor(item) {
+      return (cachedRalphRuns || []).find(function(run) { return run.workItemId === item.id; }) || null;
+    }
+
+    function ralphStatusText(run) {
+      if (!run) return '';
+      var parts = ['Ralph ' + String(run.status || 'idle').replace(/_/g, ' ')];
+      if (run.currentIteration) parts.push('iter ' + run.currentIteration + '/' + (run.maxIterations || 3));
+      if (run.stopReason) parts.push(String(run.stopReason).replace(/_/g, ' '));
+      return parts.join(' · ');
+    }
+
+    function canRunRalph(item) {
+      return ['queued', 'claimed', 'running', 'needs_review'].indexOf(item.status) >= 0;
+    }
+
+    function renderRalphStatusField(item) {
+      var run = ralphRunFor(item);
+      return run
+        ? '<div class="work-review-card__field"><strong>Ralph</strong> ' + esc(ralphStatusText(run)) + '</div>'
+        : '';
+    }
+
+    function renderRalphControls(item) {
+      var run = ralphRunFor(item);
+      var html = '';
+      if (run && (run.status === 'running' || run.status === 'stopping')) {
+        html += '<button onclick="event.stopPropagation();stopRalph(&#39;' + esc(item.id) + '&#39;)">Stop Ralph</button>';
+      } else if (canRunRalph(item)) {
+        html += '<button onclick="event.stopPropagation();startRalph(&#39;' + esc(item.id) + '&#39;)">Run Ralph</button>';
+      }
+      return html;
     }
 
     function changedFiles(item) {
@@ -2731,6 +2815,7 @@ export class DashboardServer {
         + '<div class="work-review-card__field"><strong>Branch</strong> ' + esc(branch || 'none') + '</div>'
         + '<div class="work-review-card__field"><strong>Worktree</strong> ' + esc(worktree ? baseName(worktree) : 'none') + '</div>'
         + '<div class="work-review-card__field"><strong>Base</strong> ' + esc(base || 'none') + '</div>'
+        + renderRalphStatusField(item)
         + '</div>';
       if (files.length) {
         html += '<div class="work-review-card__files">';
@@ -2750,6 +2835,7 @@ export class DashboardServer {
         html += '<div class="work-review-card__warning">Latest checks failed. Approve only if this is intentional.</div>';
       }
       html += '<div class="work-item-row__actions">'
+        + ralphControls
         + '<button onclick="event.stopPropagation();runWorkItemChecks(&#39;' + esc(item.id) + '&#39;, false)">Run checks</button>'
         + '<button onclick="event.stopPropagation();runWorkItemChecks(&#39;' + esc(item.id) + '&#39;, true)">Rerun failed</button>'
         + '<button onclick="event.stopPropagation();reviewWorkItem(&#39;' + esc(item.id) + '&#39;, &#39;' + (verifyFailed || sensitive ? 'approve-anyway' : 'approve') + '&#39;)">' + (verifyFailed || sensitive ? 'Approve anyway' : 'Approve') + '</button>'
@@ -3143,6 +3229,7 @@ export class DashboardServer {
             var worktree = workItemWorktree(item);
             var base = workItemBaseRevision(item);
             var changedCount = changedFiles(item).length;
+            var ralphRun = ralphRunFor(item);
             html += '<div class="work-queue__item">'
               + '<div class="work-queue__title">' + esc(item.title || item.id) + '</div>'
               + '<div class="work-queue__meta">'
@@ -3153,12 +3240,18 @@ export class DashboardServer {
               + (worktree ? '<span>' + esc(baseName(worktree)) + '</span>' : '')
               + (base ? '<span>' + esc(base.slice(0, 8)) + '</span>' : '')
               + (changedCount ? '<span>' + changedCount + ' changed</span>' : '')
+              + (ralphRun ? '<span>' + esc(ralphStatusText(ralphRun)) + '</span>' : '')
               + '<span>' + esc(item.updatedAt ? elapsed(item.updatedAt) : 'unknown') + '</span>'
               + '</div>';
             if (item.status === 'needs_review') {
               html += renderWorkItemReviewPanel(item);
-            } else if (item.status === 'queued' || item.status === 'claimed') {
-              html += '<div class="work-queue__actions"><button onclick="dispatchWorkItem(&#39;' + esc(item.id) + '&#39;, &#39;' + esc(item.assignedAlias || 'codex') + '&#39;)">Start</button></div>';
+            } else if (item.status === 'queued' || item.status === 'claimed' || item.status === 'running') {
+              html += '<div class="work-queue__actions">'
+                + (item.status === 'queued' || item.status === 'claimed'
+                  ? '<button onclick="dispatchWorkItem(&#39;' + esc(item.id) + '&#39;, &#39;' + esc(item.assignedAlias || 'codex') + '&#39;)">Start</button>'
+                  : '')
+                + renderRalphControls(item)
+                + '</div>';
             }
             html += '</div>';
           });
@@ -3211,11 +3304,14 @@ export class DashboardServer {
             + '</div>';
           if (item.status === 'needs_review') {
             html += '<div class="work-item-row__actions">'
+              + renderRalphControls(item)
               + '<button onclick="event.stopPropagation();runWorkItemChecks(&#39;' + esc(item.id) + '&#39;, false)">Run checks</button>'
               + '<button onclick="event.stopPropagation();reviewWorkItem(&#39;' + esc(item.id) + '&#39;, &#39;approve&#39;)">Approve</button>'
               + '<button onclick="event.stopPropagation();reviewWorkItem(&#39;' + esc(item.id) + '&#39;, &#39;changes&#39;)">Changes</button>'
               + '<button onclick="event.stopPropagation();reviewWorkItem(&#39;' + esc(item.id) + '&#39;, &#39;dismiss&#39;)">Dismiss</button>'
               + '</div>';
+          } else if (canRunRalph(item)) {
+            html += '<div class="work-item-row__actions">' + renderRalphControls(item) + '</div>';
           }
           html += '</div>';
           if (item.status === 'needs_review') {
@@ -3553,6 +3649,22 @@ export class DashboardServer {
         requestDashboardRefresh('mutation');
       }
     }
+    async function startRalph(workItemId) {
+      const r = await postJSON('/api/work-items/' + encodeURIComponent(workItemId) + '/ralph/start', {
+        agentType: 'codex',
+        maxIterations: 3,
+        stopOnVerificationPassed: true,
+        stopOnRepeatedFailure: true,
+        stopOnSensitivePaths: true,
+      });
+      if (r.error) alert(r.error);
+      else requestDashboardRefresh('mutation');
+    }
+    async function stopRalph(workItemId) {
+      const r = await postJSON('/api/work-items/' + encodeURIComponent(workItemId) + '/ralph/stop', {});
+      if (r.error) alert(r.error);
+      else requestDashboardRefresh('mutation');
+    }
     async function stopAgent(workspaceId) {
       const r = await postJSON('/api/agent/stop', { workspaceId });
       if (r.error) alert(r.error);
@@ -3646,6 +3758,7 @@ export class DashboardServer {
         cachedProjects = projRes.projects || cachedProjects;
         cachedSavedSessions = statusRes.savedSessions || cachedSavedSessions;
         cachedWorkItems = workQueueRes.workItems || cachedWorkItems;
+        cachedRalphRuns = statusRes.ralphRuns || cachedRalphRuns;
 
         if (shouldRenderSection('auth', statusRes.auth || null)) {
           renderAuth(statusRes.auth);
@@ -3681,6 +3794,7 @@ export class DashboardServer {
         }
         if (shouldRenderSection('workQueue', {
           items: cachedWorkItems,
+          ralphRuns: cachedRalphRuns,
           taskNames: (cachedTasks || []).map(function(task) { return { id: task.id, title: task.title }; }),
         })) {
           renderWorkQueue(cachedWorkItems);

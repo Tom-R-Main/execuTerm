@@ -110,10 +110,48 @@ function findVerificationArtifact(workItem: AgentWorkItemResponse, status?: 'pas
     | undefined;
 }
 
+function findArtifact(workItem: AgentWorkItemResponse, type: string) {
+  const artifacts = Array.isArray(workItem.artifactRefs) ? workItem.artifactRefs : [];
+  return artifacts.find((artifact) => {
+    const candidate = artifact as { type?: unknown };
+    return candidate.type === type;
+  }) as Record<string, unknown> | undefined;
+}
+
 function artifactTypes(workItem: AgentWorkItemResponse): string[] {
   return (Array.isArray(workItem.artifactRefs) ? workItem.artifactRefs : [])
     .map((artifact) => (artifact as { type?: unknown }).type)
     .filter((type): type is string => typeof type === 'string');
+}
+
+async function waitForRalphRun(
+  dashboardUrl: string,
+  workItemId: string,
+  predicate: (run: {
+    workItemId: string;
+    status: string;
+    stopReason?: string;
+    currentIteration?: number;
+  }) => boolean,
+  label: string
+) {
+  const deadline = Date.now() + 90_000;
+  let latest: unknown;
+  while (Date.now() < deadline) {
+    const status = await getJson<{
+      ralphRuns?: Array<{
+        workItemId: string;
+        status: string;
+        stopReason?: string;
+        currentIteration?: number;
+      }>;
+    }>(`${dashboardUrl}/api/status`);
+    const run = status.ralphRuns?.find((candidate) => candidate.workItemId === workItemId);
+    latest = run;
+    if (run && predicate(run)) return run;
+    await new Promise((resolve) => setTimeout(resolve, 1000));
+  }
+  throw new Error(`Timed out waiting for ${label}; latest=${JSON.stringify(latest)}`);
 }
 
 function hasRawFakeSecret(value: string): boolean {
@@ -381,6 +419,91 @@ async function runWorktreeE2e(): Promise<void> {
   }
 }
 
+async function runRalphE2e(): Promise<void> {
+  const dashboardUrl = process.env.EXECUTERM_DASHBOARD_URL?.replace(/\/$/, '');
+  const dashboardToken = process.env.EXECUTERM_DASHBOARD_TOKEN;
+  assert(dashboardUrl, 'EXECUTERM_DASHBOARD_URL is required for --ralph-e2e');
+  assert(dashboardToken, 'EXECUTERM_DASHBOARD_TOKEN is required for --ralph-e2e');
+
+  const config = readDaemonConfig();
+  const pat = readAuthToken();
+  assert(pat, 'execuTerm auth token is required for --ralph-e2e');
+  const client = new ExfClient({ apiUrl: config.apiUrl, pat });
+
+  const suffix = Date.now();
+  const repo = createTempRepo('executerm-ralph-smoke-');
+  const worktreeRoot = mkdtempSync(join(tmpdir(), 'executerm-ralph-worktrees-'));
+  const restoreConfig = configureTemporaryVcs(worktreeRoot);
+  const title = `execuTerm Ralph smoke ${suffix}`;
+
+  try {
+    const task = await createSyntheticTask(client, title);
+    const workItem = await createSyntheticWorkItem(client, task, title, PASS_COMMANDS);
+    await postJson(
+      `${dashboardUrl}/api/work-items/${encodeURIComponent(workItem.id)}/ralph/start`,
+      dashboardToken,
+      {
+        agentType: 'codex',
+        maxIterations: 1,
+        stopOnVerificationPassed: true,
+        stopOnRepeatedFailure: true,
+        stopOnSensitivePaths: true,
+      }
+    );
+    const workspace = await waitForWorkspace(dashboardUrl, workItem.id);
+    assert(existsSync(join(workspace.worktreePath, 'RALPH', 'PROMPT.md')), 'RALPH/PROMPT.md was not written');
+    assert(existsSync(join(workspace.worktreePath, 'RALPH', 'IMPLEMENTATION_PLAN.md')), 'RALPH/IMPLEMENTATION_PLAN.md was not written');
+    assert(existsSync(join(workspace.worktreePath, 'RALPH', 'VERIFY.md')), 'RALPH/VERIFY.md was not written');
+    assert(existsSync(join(workspace.worktreePath, 'RALPH', 'STATE.json')), 'RALPH/STATE.json was not written');
+    writeFileSync(
+      join(workspace.worktreePath, 'ralph-smoke-result.txt'),
+      'execuTerm Ralph smoke result\n'
+    );
+    await postJson(`${dashboardUrl}/hooks/agent`, dashboardToken, {
+      workspaceId: workspace.workspaceId,
+      state: 'review_ready',
+    });
+    const run = await waitForRalphRun(
+      dashboardUrl,
+      workItem.id,
+      (candidate) => candidate.status === 'needs_review',
+      `${workItem.id} Ralph needs_review`
+    );
+    assert(run.stopReason === 'verification_passed', `Unexpected Ralph stop reason: ${run.stopReason}`);
+    const reviewed = await waitForWorkItem(
+      client,
+      workItem.id,
+      (candidate) =>
+        candidate.status === 'needs_review' &&
+        !!findVerificationArtifact(candidate, 'passed') &&
+        !!findArtifact(candidate, 'ralph_iteration') &&
+        !!findArtifact(candidate, 'ralph_stop_reason'),
+      `${workItem.id} Ralph artifacts`
+    );
+    for (const expected of ['branch', 'worktree', 'base_revision', 'changed_files', 'verification_result', 'ralph_iteration', 'ralph_stop_reason']) {
+      assert(artifactTypes(reviewed).includes(expected), `Missing ${expected} artifact for Ralph smoke`);
+    }
+    const taskAfter = await client.getTask(task.id);
+    assert(
+      (taskAfter.data?.task as { executorAgent?: unknown } | undefined)?.executorAgent == null,
+      'Parent task executorAgent changed after Ralph smoke'
+    );
+    console.log(JSON.stringify({
+      ok: true,
+      mode: 'ralph-e2e',
+      taskId: task.id,
+      workItemId: workItem.id,
+      repo,
+      worktreeRoot,
+      workspace,
+      ralphRun: run,
+    }, null, 2));
+  } finally {
+    restoreConfig();
+    killSmokeCodex(title);
+  }
+}
+
 async function runPreflight(): Promise<void> {
   const codexPath = requireCommand('sh', ['-lc', 'command -v codex']);
   const codexVersion = requireCommand('codex', ['--version']);
@@ -419,6 +542,10 @@ async function runPreflight(): Promise<void> {
 }
 
 async function main(): Promise<void> {
+  if (process.argv.includes('--ralph-e2e') || process.env.EXECUTERM_SMOKE_MODE === 'ralph-e2e') {
+    await runRalphE2e();
+    return;
+  }
   if (process.argv.includes('--worktree-e2e') || process.env.EXECUTERM_SMOKE_MODE === 'worktree-e2e') {
     await runWorktreeE2e();
     return;

@@ -6,6 +6,7 @@ import type {
   ContextSourceType,
   DaemonState,
   LocalWorkspace,
+  RalphRunSnapshot,
   ResumeCapability,
   SavedResumableSession,
   SourceControlState,
@@ -348,6 +349,26 @@ export class WorkspaceManager {
       delete this.state.savedSessions[sessionId];
       writeDaemonState(this.state);
     }
+  }
+
+  listRalphRuns(): RalphRunSnapshot[] {
+    return Object.values(this.state.ralphRuns || {}).sort(
+      (a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime()
+    );
+  }
+
+  getRalphRun(workItemId: string): RalphRunSnapshot | undefined {
+    return this.state.ralphRuns?.[workItemId];
+  }
+
+  saveRalphRun(run: RalphRunSnapshot): RalphRunSnapshot {
+    this.state.ralphRuns = this.state.ralphRuns || {};
+    this.state.ralphRuns[run.workItemId] = {
+      ...run,
+      updatedAt: run.updatedAt || new Date().toISOString(),
+    };
+    writeDaemonState(this.state);
+    return this.state.ralphRuns[run.workItemId];
   }
 
   getWorkspace(workspaceId: string): LocalWorkspace | undefined {

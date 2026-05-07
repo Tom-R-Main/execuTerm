@@ -57,6 +57,48 @@ export interface AgentWorkItem {
   updatedAt?: string;
 }
 
+export type RalphRunStatus =
+  | 'idle'
+  | 'running'
+  | 'stopping'
+  | 'needs_review'
+  | 'failed';
+
+export type RalphStopReason =
+  | 'verification_passed'
+  | 'max_iterations'
+  | 'repeated_verification_failure'
+  | 'sensitive_path_changed'
+  | 'manual_stop'
+  | 'orchestration_failure';
+
+export interface RalphIterationRecord {
+  iteration: number;
+  workspaceId?: string;
+  startedAt: string;
+  completedAt?: string;
+  verificationStatus?: 'passed' | 'failed';
+  changedFiles?: Array<{ path: string; status?: string }>;
+  stopReason?: RalphStopReason;
+  error?: string;
+}
+
+export interface RalphRunSnapshot {
+  workItemId: string;
+  taskId?: string | null;
+  status: RalphRunStatus;
+  agentType: AgentType;
+  maxIterations: number;
+  currentIteration: number;
+  startedAt: string;
+  updatedAt: string;
+  completedAt?: string;
+  currentWorkspaceId?: string;
+  stopReason?: RalphStopReason;
+  error?: string;
+  iterations: RalphIterationRecord[];
+}
+
 // cmux v2 response shapes (match real protocol)
 export interface CmuxWorkspace {
   id: string;
@@ -256,6 +298,7 @@ export interface DaemonConfig {
 export interface DaemonState {
   workspaces: Record<string, LocalWorkspace>;
   savedSessions: Record<string, SavedResumableSession>;
+  ralphRuns?: Record<string, RalphRunSnapshot>;
   hookServerPort: number;
   lastSync: string;
 }

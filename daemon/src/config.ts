@@ -8,6 +8,7 @@ import type {
   DaemonConfig,
   DaemonState,
   LocalWorkspace,
+  RalphRunSnapshot,
   SavedResumableSession,
   ToolAugmentConfig,
   VcsConfig,
@@ -292,6 +293,43 @@ function normalizeSavedSession(
   };
 }
 
+function normalizeRalphRun(
+  run: Partial<RalphRunSnapshot>
+): RalphRunSnapshot {
+  const now = new Date().toISOString();
+  return {
+    workItemId: String(run.workItemId || ''),
+    taskId: run.taskId ? String(run.taskId) : undefined,
+    status: (run.status || 'idle') as RalphRunSnapshot['status'],
+    agentType: (run.agentType || 'codex') as RalphRunSnapshot['agentType'],
+    maxIterations:
+      typeof run.maxIterations === 'number' && Number.isFinite(run.maxIterations)
+        ? run.maxIterations
+        : 3,
+    currentIteration:
+      typeof run.currentIteration === 'number' && Number.isFinite(run.currentIteration)
+        ? run.currentIteration
+        : 0,
+    startedAt: String(run.startedAt || now),
+    updatedAt: String(run.updatedAt || now),
+    completedAt: run.completedAt ? String(run.completedAt) : undefined,
+    currentWorkspaceId: run.currentWorkspaceId
+      ? String(run.currentWorkspaceId)
+      : undefined,
+    stopReason: run.stopReason as RalphRunSnapshot['stopReason'],
+    error: run.error ? String(run.error) : undefined,
+    iterations: Array.isArray(run.iterations)
+      ? run.iterations.map((iteration) => ({
+          ...(iteration as RalphRunSnapshot['iterations'][number]),
+          iteration: Number((iteration as { iteration?: unknown }).iteration || 0),
+          startedAt: String(
+            (iteration as { startedAt?: unknown }).startedAt || now
+          ),
+        }))
+      : [],
+  };
+}
+
 export function readDaemonState(): DaemonState | null {
   try {
     const content = readFileSync(getDaemonStateFile(), 'utf-8');
@@ -308,9 +346,16 @@ export function readDaemonState(): DaemonState | null {
         normalizeSavedSession(session as Partial<SavedResumableSession>),
       ])
     );
+    const ralphRuns = Object.fromEntries(
+      Object.entries(parsed.ralphRuns || {}).map(([id, run]) => [
+        id,
+        normalizeRalphRun(run as Partial<RalphRunSnapshot>),
+      ])
+    );
     return {
       workspaces,
       savedSessions,
+      ralphRuns,
       hookServerPort: parsed.hookServerPort || 0,
       lastSync: parsed.lastSync || new Date().toISOString(),
     };
