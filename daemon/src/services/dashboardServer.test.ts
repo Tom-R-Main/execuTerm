@@ -133,6 +133,67 @@ describe('DashboardServer agent stop API', () => {
     expect(agentManager.stop).not.toHaveBeenCalled();
   });
 
+  it('includes workspace source control metadata on status agent rows', async () => {
+    const sandboxDir = mkdtempSync(join(tmpdir(), 'executerm-dashboard-status-'));
+    const originalConfigDir = process.env.EXF_CONFIG_DIR;
+    process.env.EXF_CONFIG_DIR = sandboxDir;
+    try {
+      const sourceControl = {
+        mode: 'git-worktree',
+        worktreePath: '/tmp/executerm-worktrees/work-1',
+        branchName: 'executerm/work-1',
+        baseRevision: 'abc123',
+      };
+      const agentManager = {
+        getAllSessions: jest.fn(() => [
+          {
+            workspaceId: 'ws-vcs',
+            agentType: 'codex',
+            state: 'running',
+            workItemId: 'work-1',
+          },
+        ]),
+        getActiveSessions: jest.fn(() => []),
+        getHistorySessions: jest.fn(() => []),
+        getSavedSessions: jest.fn(() => []),
+      };
+      const workspaceManager = {
+        getWorkspace: jest.fn(() => ({ id: 'ws-vcs', sourceControl })),
+        getAttachedContextItems: jest.fn(() => []),
+        getDevServerWorkspaces: jest.fn(() => []),
+        listTemplates: jest.fn(() => []),
+      };
+      const server = new DashboardServer(
+        () => agentManager as any,
+        directoryManager as any,
+        workspaceManager as any,
+        () => null,
+        () => authState,
+        () => null,
+        () => ({ isConnected: () => false } as any)
+      );
+      const response = makeResponse();
+
+      await (server as any).handleRequest(makeGetRequest('/api/status'), response);
+
+      expect(response.statusCode).toBe(200);
+      expect(JSON.parse(response.body).agents[0]).toEqual(
+        expect.objectContaining({
+          workspaceId: 'ws-vcs',
+          workItemId: 'work-1',
+          sourceControl,
+        })
+      );
+    } finally {
+      rmSync(sandboxDir, { recursive: true, force: true });
+      if (originalConfigDir === undefined) {
+        delete process.env.EXF_CONFIG_DIR;
+      } else {
+        process.env.EXF_CONFIG_DIR = originalConfigDir;
+      }
+    }
+  });
+
   it('returns a structured directory error when dispatch has no configured cwd', async () => {
     const workspaceManager = {} as any;
     const dispatcher = {

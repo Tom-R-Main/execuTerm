@@ -818,7 +818,10 @@ export class DashboardServer {
 
   private async serveStatus(res: http.ServerResponse): Promise<void> {
     const agentManager = this.getAgentManager();
-    const sessions = agentManager?.getAllSessions() ?? [];
+    const sessions = (agentManager?.getAllSessions() ?? []).map((agent) => ({
+      ...agent,
+      sourceControl: this.workspaceManager.getWorkspace(agent.workspaceId)?.sourceControl,
+    }));
     const activeAgents = (agentManager?.getActiveSessions() ?? []).map((agent) => ({
       ...agent,
       attachedContextCount: this.workspaceManager.getAttachedContextItems(
