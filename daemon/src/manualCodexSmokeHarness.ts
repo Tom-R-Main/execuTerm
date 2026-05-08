@@ -179,9 +179,10 @@ async function waitForWorkItem(
   client: ExfClient,
   workItemId: string,
   predicate: (workItem: AgentWorkItemResponse) => boolean,
-  label: string
+  label: string,
+  timeoutMs = 30_000
 ): Promise<AgentWorkItemResponse> {
-  const deadline = Date.now() + 30_000;
+  const deadline = Date.now() + timeoutMs;
   let latest: AgentWorkItemResponse | undefined;
   while (Date.now() < deadline) {
     const result = await client.getWorkItem(workItemId);
@@ -424,6 +425,14 @@ async function runRalphE2e(): Promise<void> {
   const dashboardToken = process.env.EXECUTERM_DASHBOARD_TOKEN;
   assert(dashboardUrl, 'EXECUTERM_DASHBOARD_URL is required for --ralph-e2e');
   assert(dashboardToken, 'EXECUTERM_DASHBOARD_TOKEN is required for --ralph-e2e');
+  assert(
+    process.env.EXECUTERM_CONFIRM_REAL_CODEX === '1',
+    [
+      'EXECUTERM_CONFIRM_REAL_CODEX=1 is required for --ralph-e2e.',
+      'Do not set it until you are running the tagged dev app and can visually confirm Codex is the actor.',
+      'This prevents the smoke from silently passing on a forced review_ready hook alone.',
+    ].join(' ')
+  );
 
   const config = readDaemonConfig();
   const pat = readAuthToken();
@@ -455,14 +464,38 @@ async function runRalphE2e(): Promise<void> {
     assert(existsSync(join(workspace.worktreePath, 'RALPH', 'IMPLEMENTATION_PLAN.md')), 'RALPH/IMPLEMENTATION_PLAN.md was not written');
     assert(existsSync(join(workspace.worktreePath, 'RALPH', 'VERIFY.md')), 'RALPH/VERIFY.md was not written');
     assert(existsSync(join(workspace.worktreePath, 'RALPH', 'STATE.json')), 'RALPH/STATE.json was not written');
-    writeFileSync(
-      join(workspace.worktreePath, 'ralph-smoke-result.txt'),
-      'execuTerm Ralph smoke result\n'
-    );
-    await postJson(`${dashboardUrl}/hooks/agent`, dashboardToken, {
-      workspaceId: workspace.workspaceId,
-      state: 'review_ready',
-    });
+
+    const naturalTimeoutMs = Number(process.env.EXECUTERM_RALPH_NATURAL_TIMEOUT_MS || '120000');
+    let forcedReviewReadyFallback = false;
+    try {
+      await waitForWorkItem(
+        client,
+        workItem.id,
+        (candidate) => candidate.status === 'needs_review',
+        `${workItem.id} natural Ralph needs_review`,
+        Number.isFinite(naturalTimeoutMs) ? naturalTimeoutMs : 120_000
+      );
+    } catch (error) {
+      if (process.env.EXECUTERM_RALPH_FORCE_REVIEW_READY !== '1') {
+        throw new Error(
+          [
+            error instanceof Error ? error.message : String(error),
+            'Real Codex did not naturally reach needs_review within the timeout.',
+            'If you visually confirmed Codex launched and received the Ralph prompt, rerun with EXECUTERM_RALPH_FORCE_REVIEW_READY=1 to explicitly label the forced hook as a fallback.',
+          ].join(' ')
+        );
+      }
+      forcedReviewReadyFallback = true;
+      writeFileSync(
+        join(workspace.worktreePath, 'ralph-smoke-result.txt'),
+        'execuTerm Ralph forced review_ready fallback smoke result\n'
+      );
+      await postJson(`${dashboardUrl}/hooks/agent`, dashboardToken, {
+        workspaceId: workspace.workspaceId,
+        state: 'review_ready',
+      });
+    }
+
     const run = await waitForRalphRun(
       dashboardUrl,
       workItem.id,
@@ -497,6 +530,8 @@ async function runRalphE2e(): Promise<void> {
       worktreeRoot,
       workspace,
       ralphRun: run,
+      forcedReviewReadyFallback,
+      realCodexAssertion: 'EXECUTERM_CONFIRM_REAL_CODEX=1 was set by the operator before running this smoke.',
     }, null, 2));
   } finally {
     restoreConfig();
