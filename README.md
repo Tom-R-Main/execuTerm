@@ -1,11 +1,11 @@
 <h1 align="center">execuTerm</h1>
-<p align="center">The terminal for developers who run AI agents.</p>
+<p align="center">Deprecated terminal for developers who run AI agents.</p>
 
-<p align="center">
-  <a href="https://github.com/Tom-R-Main/execuTerm/releases/latest/download/execuTerm-macos.dmg">
-    <img src="./docs/assets/macos-badge.png" alt="Download execuTerm for macOS" width="180" />
-  </a>
-</p>
+> [!WARNING]
+> **execuTerm is deprecated and no longer maintained.** This repository is
+> retained as a historical reference. Its downloads, auto-update channel, and
+> compatibility with current macOS or Siftable services are unsupported. New
+> installations are not recommended.
 
 <p align="center">
   <img src="./docs/assets/screenshots/dashboard.png" alt="execuTerm dashboard" width="900" />
@@ -57,17 +57,11 @@ Built with Swift and AppKit on top of [libghostty](https://github.com/ghostty-or
 - **Scriptable** — CLI and Unix socket API to create workspaces, split panes, send keystrokes, open URLs
 - **ExecuFunction integration** — Connects to your ExecuFunction workspace for tasks, code search, knowledge, and context
 - **Ghostty compatible** — Reads your existing `~/.config/ghostty/config` for themes, fonts, and colors
-- **Auto-updates** — Ships with Sparkle. Download once, stay current
+## Historical builds
 
-## Install
-
-<a href="https://github.com/Tom-R-Main/execuTerm/releases/latest/download/execuTerm-macos.dmg">
-  <img src="./docs/assets/macos-badge.png" alt="Download execuTerm for macOS" width="180" />
-</a>
-
-Open the DMG, drag execuTerm to Applications. That's it. Auto-updates handle the rest.
-
-Requires macOS 14 (Sonoma) or later. Signed and notarized by Apple.
+Existing releases are preserved only as unsupported historical artifacts. The
+project no longer publishes builds or updates, and current macOS compatibility
+is not maintained.
 
 ## Keyboard shortcuts
 
